@@ -1,4 +1,4 @@
-# Bacterial and fungal community structure in hydroponic systems: insights from commercial facilities in Ohio
+# Influence of system type and management practices on bacterial and fungal community structure in hydroponic systems: insights from commercial facilities in Ohio
 Fiama Guevara, Timothy Frey, Antonino Malacrinò, and Maria Soledad Benitez Ponce
 
 ## Abstract
@@ -6,6 +6,14 @@ Hydroponics is a method of growing plants using a mineral nutrient-enriched solu
 
 
 ## Disclaimer
-This repository contains the code for downstream analyses inlcuding alpha, beta diversity and identification of the bacterial and fungal core genera. Raw reads were processed using the nf-core/ampliseq workflow version 2.5.0 <https://nf-co.re/ampliseq/2.9.0/docs/usage>. Illumina raw reads (16S and ITS) are available at NCBI SRA under the BioProject number *PRJNA1070607*.
+This repository contains the code for downstream analyses inlcuding alpha, beta diversity and identification of the bacterial and fungal core genera. Raw reads were processed using the [nf-core/ampliseq workflow version 2.5.0](https://nf-co.re/ampliseq/2.9.0/docs/usage). Illumina raw reads (16S and ITS) are available at NCBI SRA under the BioProject number *`PRJNA1070607`*.
 
 ## Code
+## 1. Alpha, beta diversity and distance-based redundancy analysis (db-RDA)
+In this section you could find community composition analyses and db-RDA analysis to determine the influence of nutrient solution management parameters and environment factors in bacterial and fungal community structure.
+
+## 2. Core taxa membership
+Code to reproduce core genera analysis.
+
+## 3. Output files
+In this section you could find the ASV count tables, phyloseq objects and metadata files for 16S and ITS datasets. 
