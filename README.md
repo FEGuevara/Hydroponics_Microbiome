@@ -12,7 +12,7 @@ This repository contains the code for downstream analyses inlcuding alpha, beta 
 ## 1. Alpha, beta diversity and distance-based redundancy analysis (db-RDA)
 In this section you could find community composition analyses and db-RDA analysis to determine the influence of nutrient solution management parameters and environment factors in bacterial and fungal community structure.
 
-## 2. Core taxa membership
+## 2. [Core taxa membership](Coe taxa)
 Code to reproduce core genera analysis.
 
 ## 3. Output files
