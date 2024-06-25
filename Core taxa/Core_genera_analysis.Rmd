@@ -1,14 +1,6 @@
----
-title: "New_CoreMicro_analysis"
-author: "Fiama Guevara"
-date: "2024-04-29"
-output: html_document
----
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE}
 
@@ -55,9 +47,7 @@ library(ggVennDiagram)
 library(janitor)
 
 ```
-
-
-# ANALYSIS FOR ALL FACILITIES (04/29/2024)
+# ANALYSIS FOR ALL FACILITIES
 Final analysis with all facility types and POnd1-Season2 from FacilityB
 modified from Cantoran et al. 2023 (DOI: 10.1093/femsec/fiad098)
 
