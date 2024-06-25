@@ -1,14 +1,3 @@
----
-title: "New_DWCsfacilities_analysis"
-author: "Fiama Guevara"
-date: "2024-04-30"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 ```{r, warning=FALSE, message=FALSE, echo=FALSE}
 
 #Setting libraries
