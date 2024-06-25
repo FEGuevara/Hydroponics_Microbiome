@@ -1,0 +1,643 @@
+---
+title: "New_analysis_Bacteria"
+author: "Fiama Guevara"
+date: "2024-04-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Setting libraries
+
+library("phyloseq")
+library("ggplot2")
+library("scales")
+library("grid")
+#library("DESeq2")
+library("vegan")
+library("ape")
+library("plyr")
+library("ggpmisc")
+library("dplyr")
+library("broom")
+library("picante")
+library("Rmisc")
+library("emmeans")
+library("car")  #used for Anova function
+#library("lme4")
+library("tibble")
+library("data.table")
+#library("limma")
+library("microbiome")
+library("ggvenn")
+library("patchwork")
+library("RColorBrewer")
+library("ampvis2")
+library("microViz")
+library("tidyverse")
+library("tidyr")
+library("parallel")
+library("stringr")
+library("stringi")
+library("MuMIn")
+library("ggpubr")
+library("purrr")
+#library("NetCoMi")
+library("randomcoloR")
+#library("miaViz")
+library("metagenomeSeq")
+library("cowplot")
+#library("decontam")
+library("ggthemes")
+library(DECIPHER) #for sequences alignment
+library(phangorn)  #for creating a phylogenentic tree
+library('ggord')  #for ordination plots
+#library("Maaslin2") #Diff Abund AMcode
+## For citation use: citation("pkgname")
+```
+
+# Controls
+```{r}
+##Read phyloseq object
+ps.16S <- readRDS('ps.16S.new.rds')
+
+#Sub-setting Controls
+ps_controls <- subset_samples(ps.16S, system.type == "Control")
+sample_data(ps_controls)
+
+PosCrtl <- ps.16S %>% ps_filter(sample.type == "PControl") %>% subset_taxa(Kingdom != "Archaea")
+NegCrtl <- ps.16S %>% ps_filter(sample.type == "NControl") %>% subset_taxa(Kingdom != "Archaea")
+
+PC.df <- as.data.frame(tax_table(ps_controls))
+
+### Other approach - creatinf a data frame of rel.abundance
+# get abundance in %
+ps_controlsRA <- transform_sample_counts(ps_controls, function(x) 100 * x/sum(x))
+
+# agglomerate taxa by Genus level
+ps_controls_glomG <- tax_glom(ps_controlsRA, taxrank = 'Genus', NArm = FALSE)
+
+# create dataframe from phyloseq object
+dat_controls <- psmelt(ps_controls_glomG)
+
+# convert Phylum to a character vector from a factor because R
+dat_controls$Genus <- as.character(dat_controls$Genus)
+
+#simple way to rename phyla with < 1% abundance
+dat_controls$Genus[dat_controls$Abundance < 5] <- "Genera < 5% abund."
+
+#set color palette to accommodate the number of genera
+colourCount = length(unique(dat_controls$Genus))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+# New facet label names 
+controls.labs <- c("Negative Controls", "Positive Controls")
+names(controls.labs) <- c("NControl", "PControl")
+
+
+# Create the plot
+pCB <- ggplot(data=dat_controls, aes(x=Sample, y=Abundance, fill=Genus)) + 
+          geom_bar(aes(), stat="identity", position="stack") + scale_fill_manual(values=getPalette(colourCount)) +
+  theme(legend.position="right") +
+  facet_grid(~sample.type, scales = "free", labeller = labeller(sample.type = controls.labs)) +
+  labs(x= "", y = "Relative Abundance (%)\n") +
+  guides(fill=guide_legend(title="Genera")) + 
+   theme_few()
+
+#To change X-axis labels but error
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_x_discrete(limits = c("FFNC", "FQIAGENC", "FAATCC", "FZYMOC"), labels = c("FFNC" = "BeadsProt","FQIAGENC" = "QiagenKit", "FAATCC" = "ATTCC", "FZYMOC" = "ZYMO"))
+
+
+ggsave("ControlsBacteria_barplot.png", pCB, 
+  width = 50,
+  height = 20,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+##Controls ITS
+ps.ITS <- readRDS('ps.ITS.new.rds')
+
+#Sub-setting Controls
+ps_controls <- subset_samples(ps.ITS, system.type == "Control")
+sample_data(ps_controls)
+
+PosCrtl <- ps.ITS %>% ps_filter(sample.type == "PControl") %>% subset_taxa(Kingdom != "Archaea")
+NegCrtl <- ps.ITS %>% ps_filter(sample.type == "NControl") %>% subset_taxa(Kingdom != "Archaea")
+
+PC.df <- as.data.frame(tax_table(ps_controls))
+
+### Other approach - creatinf a data frame of rel.abundance
+# get abundance in %
+ps_controlsRA <- transform_sample_counts(ps_controls, function(x) 100 * x/sum(x))
+
+# agglomerate taxa by Genus level
+ps_controls_glomG <- tax_glom(ps_controlsRA, taxrank = 'Genus', NArm = FALSE)
+
+# create dataframe from phyloseq object
+dat_controls <- psmelt(ps_controls_glomG)
+
+# convert Phylum to a character vector from a factor because R
+dat_controls$Genus <- as.character(dat_controls$Genus)
+
+#simple way to rename phyla with < 1% abundance
+dat_controls$Genus[dat_controls$Abundance < 5] <- "Genera < 5% abund."
+
+#set color palette to accommodate the number of genera
+colourCount = length(unique(dat_controls$Genus))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+# New facet label names 
+controls.labs <- c("Negative Controls", "Positive Controls")
+names(controls.labs) <- c("NControl", "PControl")
+
+
+# Create the plot
+pCF <- ggplot(data=dat_controls, aes(x=Sample, y=Abundance, fill=Genus)) + 
+          geom_bar(aes(), stat="identity", position="stack") + scale_fill_manual(values=getPalette(colourCount)) +
+  theme(legend.position="right") +
+  facet_grid(~sample.type, scales = "free", labeller = labeller(sample.type = controls.labs)) +
+  labs(x= "", y = "Relative Abundance (%)\n") +
+  guides(fill=guide_legend(title="Genera")) + 
+   theme_few()
+
+ggsave("ControlsFungi_barplot.png", pCF, 
+  width = 50,
+  height = 20,
+  units = "cm",
+  dpi = 600)
+
+```
+## Controls all plots
+```{r}
+
+#Plotting all ordination figures in one
+library(patchwork)
+
+Controls.plots <- (pCB + pCF) +
+  plot_annotation(
+    title = "Taxonomical composition controls",
+    tag_levels = "A") +
+    theme (axis.title = element_text (size = 8)) &
+      theme(plot.tag = element_text(size = 8)) &
+          theme(axis.text.y = element_text (size = 8), axis.text.x = element_text (size = 8))
+
+ggsave("Barplot_AllControls.png", Controls.plots, 
+  width = 50,
+  height = 20,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Subsetting
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+### Read final phyloseq pbject
+ps.16S.final <- readRDS('ps.16S.new.rds')
+
+# For the final analysis just 1 Pond from GCG was included (Pond 1 from Season 2 was selected because same variety)
+# Sub-setting and selecting just one pond for Facility B - 16S
+ps1o.16S <- ps.16S.final %>% ps_filter(comparison == "only")
+sample_data(ps1o.16S)
+
+#Sub-setting for plant compartment
+ps1.16S.plant <- ps1o.16S %>% ps_filter(source == c("Plant", "Water"), sampling.point != "Water.source")
+ps1.16S.leaves <- ps1.16S.plant %>% ps_filter(sample.type == "Leaves")
+ps1.16S.roots <- ps1.16S.plant %>% ps_filter(sample.type == "Roots")
+ps1.16S.GM <- ps1.16S.plant %>% ps_filter(sample.type == "growthmedia")
+ps1.16S.water <- ps1.16S.plant %>% ps_filter(sample.type == "Filtered.water")
+
+```
+
+# Alpha diversity - Indexes
+```{r}
+# Evenness calculation 
+Evenness.16S <- evenness(ps1.16S.plant, index = "all")
+
+# Create data frame with evenness measurements
+df.16S.Ev <- Evenness.16S[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.16S <- estimate_richness(ps1.16S.plant)
+
+# Create a data frame with alpha diversity and metadata
+adiv.16S.df <- cbind(sample_data(ps1.16S.plant), richness.16S, df.16S.Ev)
+
+#write.table(adiv.16S.df, file="adiv.all.16S.Newresults.txt")
+
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.16S <- adiv.16S.df %>%
+  group_by(sample.type, system.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.16S, file="Meanadiv.16S.Newresults.txt")
+
+## Means only by sample type
+adiv.16S.df <- read.table("adiv.all.16S.Newresults.txt")
+
+df <- mean_sd_adiv.16S <- adiv.16S.df %>%
+  group_by(sample.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+```
+
+# Alpha diversity Statistics
+## Diagnistic plots
+```{r}
+#plots
+par(mfrow = c(2, 2)) 
+
+ggqqplot(adiv.16S.df$Observed)
+ggqqplot(adiv.16S.df$Shannon)
+ggqqplot(adiv.16S.df$InvSimpson)
+ggqqplot(adiv.16S.df$pielou)
+
+
+```
+
+## Linear mixed models
+```{r}
+### Diagnostic models - Results= sample type, system type  and the interaction are significant however the contrasts are significant at sample type level and vary between system types
+#####################################----------------------------###################################
+#NOTE: need to restart session to be able to run lme4 package without getting aborted session (RStudio aborting when running lmer)
+#Conflicts with other previously loaded packages
+#####################################----------------------------####################################
+
+library("lme4")
+library("car")
+
+# Upload dataframe with alpha div measures
+adiv.16S.df <- read.table("adiv.all.16S.Newresults.txt")
+
+#Analysis on all sample types
+#Observed (richness)
+model.Observed <- lmer(Observed ~ system.type * sample.type + (1|facility.code), data = adiv.16S.df)
+
+Anova(model.Observed)
+
+summary(model.Observed)
+
+#Residuals plots
+par(mfrow=c(2,3))
+plot(model.Observed, which=1:6) 
+
+res <- resid(model.Observed)
+
+shapiro.test(res)  # Can test normality on raw data or residuals. Residuals recommended or in each group of raw data
+
+par(mfrow = c(1, 2)) # combine plots
+
+# histogram
+hist(res, breaks = 40)
+
+# QQ-plot
+qqPlot(res,
+       id = FALSE # id = FALSE to remove point identification
+)
+
+#Pairwise comparisons 
+mSys <- emmeans(model.Observed, "system.type")
+pairs(mSys) #NO significant differences
+
+mSamp <- emmeans(model.Observed, "sample.type")
+pairs(mSamp) #Significant differences in all contrasts except water-roots
+
+mall <- emmeans(model.Observed, ~ sample.type | system.type)
+pairs(mall)
+
+```
+# CSS normalization
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Convert the phyloseq object to a metagenomeseq object:
+mgs_css <- phyloseq_to_metagenomeSeq(ps1.16S.plant)
+
+# Perform the Cumulative Sum Scaling:
+mgs_css <- cumNorm(mgs_css)
+
+# Extract the counts and add them to a separate phyloseq object:
+css_counts <- MRcounts(mgs_css, norm = TRUE)
+ps_css <- ps1.16S.plant
+otu_table(ps_css) <- otu_table(css_counts, taxa_are_rows = TRUE)
+
+#Now lets compare the original data to the CSS normalized data:
+otu_table(ps1.16S.plant)[1:5, 1:5]
+head(sample_sums(ps1.16S.plant))
+
+otu_table(ps_css)[1:5, 1:5]
+head(sample_sums(ps_css))
+
+```
+
+# Beta diversity analyses with normalized (relative abundance) data 
+```{r}
+
+## Get relative abundance in %
+#Using CSS normalized data
+#ps1.16S.plant_RA <- transform_sample_counts(ps_css, function(x) x/sum(x))
+
+#Using non-normalized data
+ps1.16S.plant_RA <- transform_sample_counts(ps1.16S.plant, function(x) x/sum(x))
+
+```
+
+## Permanova Bray-Curtis
+```{r}
+sampledf <- data.frame(sample_data(ps1.16S.plant_RA))
+dist.matBC <- phyloseq::distance(ps1.16S.plant_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+setBlocks(perm) <- with(sampledf, facility.code)
+pmv.BCgeneral <- adonis2(dist.matBC ~ sample.type*system.type, data = sampledf, permutations = perm)
+
+pmv.BCgeneral
+
+#Results: in all sample type and system type are significant
+```
+## Pairwise permanova -Bray Curtis
+```{r}
+# Sample types
+RVAideMemoire::pairwise.perm.manova(dist.matBC, sampledf$sample.type, nperm = 999, progress = TRUE, p.method = "fdr", F = T, R2 = T)
+
+# System types
+RVAideMemoire::pairwise.perm.manova(dist.matBC, sampledf$system.type, nperm = 999, progress = TRUE, p.method = "fdr", F = T, R2 = T)
+
+```
+
+## Permanova Unifrac
+```{r}
+sampledf <- data.frame(sample_data(ps1.16S.plant_RA))
+dist.matUni <- phyloseq::distance(ps1.16S.plant_RA, method = "unifrac")
+
+#Third: fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+setBlocks(perm) <- with(sampledf, facility.code)
+pmv.Uni <- adonis2(dist.matUni ~ sample.type*system.type, data = sampledf, permutations = perm)
+
+pmv.Uni
+
+```
+
+## Beta-dispersion test
+```{r}
+# calculates the beta-dispersion for each group, when comparing 2 or more
+#For system type
+disp.testSystem <-
+  betadisper(dist.matBC, group = sampledf$system.type, bias.adjust = TRUE)
+
+#For sample type
+disp.testSample <-
+  betadisper(dist.matBC, group = sampledf$sample.type, bias.adjust = TRUE)
+
+# tests if centroid distances are significantly different from each other
+disp.anovaSystem <- anova(disp.testSystem) #Result= centroids sig different p-value=0.03122
+
+disp.anovaSample <- anova(disp.testSample) #Result= centroids sig different p-value=0.000005698
+```
+
+```{r}
+# test significance between each group
+dispSys.TukeyHSD <- TukeyHSD(disp.test) #Result= only EF-DWC different (p-value=0.05511) really significant??
+
+dispSample.TukeyHSD <- TukeyHSD(disp.testSample) #Result= only leaves-roots/GM/water different (p-values=0.0029879, 0.0001004 and 0.0002765, respectively)
+
+```
+
+```{r}
+# plot showing the dispersion for each group
+plot(disp.test, hull = FALSE, ellipse = TRUE)
+```
+
+```{r}
+#test for homogeneity of multivariate dispersions 
+permutest(disp.test, pairwise = TRUE, permutations = 999)
+```
+
+# Ordinations
+```{r}
+#PCoA-Bray
+ordBC = ordinate(ps1.16S.plant_RA, method = "PCoA", distance = "bray")
+
+#PCoA-Unifrac
+ordUni = ordinate(ps1.16S.plant_RA, method = "PCoA", distance = "unifrac")
+
+
+#Non-metric MultiDimensional Scaling (NMDS) - Bray
+ord.nmdsB <- ordinate(ps1.16S.plant_RA, method = "NMDS", distance = "bray") #stress-value= 0.26 when normalized stress-val=0.28
+
+# Create a "stressplot"
+stressplot(ord.nmdsB) 
+
+#Non-metric MultiDimensional Scaling (NMDS) - Unifrac
+ord.nmdsU <- ordinate(ps1.16S.plant_RA, method = "NMDS", distance = "unifrac")
+#stress-value= 0.14 in both non-normalized and normalized
+# Create a "stressplot"
+stressplot(ord.nmdsU) 
+
+```
+
+# Ordination plots - all sample types
+## PCoA-Bray
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.Ord.BC <- plot_ordination(ps1.16S.plant_RA, ordBC, color = "sample.type") 
+
+p.Ord.BC$layers <- p.Ord.BC$layers[-1]
+
+PCoA_B <- p.Ord.BC + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+# Save plot
+ggsave("PCoA_Bray.png", PCoA_B, 
+  width = 15,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+## PCoA-Unifrac
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.Ord.Uni <- plot_ordination(ps1.16S.plant_RA, ordUni, color = "sample.type") 
+
+p.Ord.Uni$layers <- p.Ord.Uni$layers[-1]
+
+PCoA_Uni <-p.Ord.Uni + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+```
+
+# NMDS-Bray
+```{r}
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.nmds.B <- plot_ordination(ps1.16S.plant_RA, ord.nmdsB, color = "sample.type") 
+
+p.nmds.B$layers <- p.nmds.B$layers[-1]
+
+nmds_B <- p.nmds.B + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+    
+```
+
+# NMDS-Unifrac
+```{r}
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.nmds.Uni <- plot_ordination(ps1.16S.plant_RA, ord.nmdsU, color = "sample.type") 
+
+nmds_Uni <- p.nmds.Uni + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+    
+```
+
+# Distance based RDA with capscale
+```{r}
+
+#All samples
+ord.cap <- ordinate(ps1.16S.plant_RA,
+                    formula = o ~ sample.type + system.type + pH + EC + water.temp + plant.age + water.source + humidity,
+                    method = "CAP",
+                    distance = "bray")
+```
+
+
+```{r}
+summary(ord.cap)
+```
+```{r}
+# Total variance explained by the RDA
+RsquareAdj(ord.cap) #adj.r.sqrt=0.35
+
+# Global RDA significance
+anova(ord.cap) #Result=model is significant p=0.001 F=7.3571
+
+```
+
+
+```{r}
+anova(ord.cap, by="axis")
+```
+
+```{r}
+anova(ord.cap, by="terms")
+```
+
+
+```{r}
+
+cap.plot <- plot_ordination(ps1.16S.plant_RA,
+                vegan::scores(ord.cap, scaling = 1),
+                type = "sites",
+                color = "sample.type",
+                shape = "system.type")
+
+```
+
+```{r}
+# Now add the environmental variables as arrows to the plot_ordination result
+arrowmat = vegan::scores(ord.cap, display = "bp")
+
+# Add labels, make a data.frame
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+
+arrow_sel <- arrowdf[7:12,]
+
+# Define the arrow aesthetic mapping
+arrow_map = aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_map = aes(x = 1.05 * CAP1, y = 1.05 * CAP2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowhead = arrow(length = unit(0.05, "npc"))
+
+p1 = cap.plot + geom_segment(arrow_map, size = 0.4, data = arrow_sel, color = "black", 
+    arrow = arrowhead) + geom_text(label_map, size = 3, nudge_x = 0.02, nudge_y = -0.01, data = arrow_sel)
+p1
+```
+
+## Final plot
+```{r}
+db.RDA.B_plot.final <- p1 + geom_point(mapping = aes(shape = factor(system.type)), size=3, alpha=0.85) +
+        ggtitle("dbRDA- Bacterial communities") +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample Type", values = c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C"), breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type", x= "\ndbRDA1 [9.45% / 23.25%]", y= "dbRDA2 [4.13% / 10.17%]")
+
+# Save plot
+ggsave("db.RDA_plot_Bacteria.png", db.RDA.B_plot.final, 
+  width = 18,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+#Alternative plotting option
+ggord(ord.cap)
+```
+

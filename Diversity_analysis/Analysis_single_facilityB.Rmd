@@ -1,0 +1,1187 @@
+---
+title: "GCG_results"
+author: "Fiama Guevara"
+date: "2023-10-16"
+output: html_document
+---
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Setting libraries
+library("phyloseq")
+library("ggplot2")
+library("scales")
+library("grid")
+library("vegan")
+library("ape")
+library("plyr")
+library("ggpmisc")
+library("dplyr")
+library("broom")
+library("picante")
+library("Rmisc")
+library("emmeans")
+library("car")
+library("lme4")
+library("tibble")
+library("data.table")
+library("microbiome")
+library("ggvenn")
+library("patchwork")
+library("RColorBrewer")
+library("ampvis2")
+library("microViz")
+library("tidyverse")
+library("parallel")
+library("tidyr")
+library("stringr")
+library("stringi")
+library("MuMIn")
+library("ggpubr")
+#library("NetCoMi")
+library("randomcoloR")
+library("miaViz")
+library("cowplot")
+library("decontam")
+library(ggthemes)
+library(ggVennDiagram)
+library(janitor)
+```
+
+# COMPARISON WITHIN DWC FACILITY B
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Use the phyloseq object before normalization
+ps.16S.nc <- readRDS('ps.16S.new.rds')
+ps.ITS.nc <- readRDS('ps.ITS.new.rds')
+
+# Subsetting by facility - 16S
+psB.16S <- ps.16S.nc %>% ps_filter(facility.code == "FacilityB")
+sample_data(psB.16S)
+
+
+# Subsetting facility - ITS
+psB.ITS <- ps.ITS.nc %>% ps_filter(facility.code == "FacilityB")
+sample_data(psB.ITS)
+
+```
+## Diagnostic number reads
+```{r}
+sdt.16S.FB = data.table(as(sample_data(psB.16S), "data.frame"),
+                 TotalReads = sample_sums(psB.16S), keep.rownames = TRUE)
+setnames(sdt.16S.FB, "rn", "SampleID")
+sdt.16S.FB$TotalReads <- as.numeric(sdt.16S.FB$TotalReads)
+
+sdt.16S.FB %>%
+  arrange(TotalReads) 
+
+
+```
+
+```{r}
+TotalReads_FB <- sdt.16S.FB %>% 
+                        group_by(sample.type, sampling.season, replicate) %>%
+                            summarize(Total = sum(TotalReads))
+```
+
+## Sub-setting
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Removing Kingdom Archaea 
+psB.16S <- subset_taxa(psB.16S, Kingdom !="Archaea")
+
+#Sub-setting for plant compartment -16S (Pond 4 not included)
+psB.16S.plant <- psB.16S %>% ps_filter(source == c("Plant", "Water"), , sampling.point != "Water.source", replicate != "Pond4")
+
+psB.16S.leaves <- psB.16S.plant %>% ps_filter(sample.type == "Leaves")
+psB.16S.roots <- psB.16S.plant %>% ps_filter(sample.type == "Roots")
+psB.16S.GM <- psB.16S.plant %>% ps_filter(sample.type == "growthmedia")
+psB.16S.water <- psB.16S.plant %>% ps_filter(sample.type == "Filtered.water")
+
+#Sub-setting for plant compartment -ITS
+psB.ITS.plant <- psB.ITS %>% ps_filter(source == c("Plant", "Water"), , sampling.point != "Water.source", replicate != "Pond4")
+
+psB.ITS.leaves <- psB.ITS.plant %>% ps_filter(sample.type == "Leaves")
+psB.ITS.roots <- psB.ITS.plant %>% ps_filter(sample.type == "Roots")
+psB.ITS.GM <- psB.ITS.plant %>% ps_filter(sample.type == "growthmedia")
+psB.ITS.water <- psB.ITS.plant %>% ps_filter(sample.type == "Filtered.water")
+
+```
+
+#BACTERIA
+# Alpha diversity Bacteria
+```{r}
+# Evenness calculation 
+Evenness.16S.FB <- evenness(psB.16S.plant, index = "all")
+
+# Create data frame with evenness measurements
+df.16S.FB.Ev <- Evenness.16S.FB[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.16S.FB <- estimate_richness(psB.16S.plant)
+
+# Create a data frame with alpha diversity and metadata
+adiv.16S.FB.df <- cbind(sample_data(psB.16S.plant), richness.16S.FB, df.16S.FB.Ev)
+
+#write.table(adiv.16S.FB.df, file="adiv.FB.16S.results.txt")
+
+#adiv.16S.DWC.df <- read.table("adiv.DWC.16S.results.txt")
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.16S.FB <- adiv.16S.FB.df %>%
+  group_by(sample.type, sampling.season) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.16S.FB, file="MeanAdiv.16S.FBesults.txt")
+
+#mean_sd_adiv.16S.FB <- read.table("MeanAdiv.16S.FBesults.txt")
+
+```
+## Boxplots 
+```{r}
+# Prepare a vector of colors with specific color for sample type
+library(RColorBrewer)
+myColors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+#Shannon index plot 
+shannon.16S.FB.plot <- ggplot(adiv.16S.FB.df, aes(x = replicate, y = Shannon, fill= replicate)) +
+  geom_boxplot(outlier.shape=NA) + 
+  ylab('Shannon index') +
+  scale_fill_manual(name = "DWC system", values = myColors, breaks=c("Pond1","Pond2","Pond3"), labels=c("Pond 1","Pond 2","Pond 3"))
+
+```
+
+```{r}
+#Change labels facet grid
+#New facet label names for sample.type variable
+sample.labs <- c("Nutrient\nsolution", "Growth\nmedia", "Roots", "Leaves")
+names(sample.labs) <- c("Filtered.water", "growthmedia", "Roots", "Leaves")
+
+# New facet label names for supp variable
+season.labs <- c("Season 1", "Season 2")
+names(season.labs) <- c("1", "2")
+
+# Create the plot
+alpha.FB.plot <- shannon.16S.FB.plot + facet_grid(
+  sampling.season ~ sample.type, 
+  labeller = labeller(sampling.season = season.labs, sample.type = sample.labs))    + theme(strip.background = element_rect(
+     color="black", fill="gray", size=1, linetype="solid")
+          ) + theme_bw() +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+    theme(plot.margin = unit(c(0,2,0.2,1), 'lines'))
+
+
+# Save plot
+ggsave("Boxplot.Shannon.FacilityB.png", alpha.FB.plot, 
+  width = 16,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Alpha div by Roots & Nut sol
+```{r}
+#Function for alpha diversity estimates
+alphaDiv.fun <- function(ps, s1){
+  sps <- ps %>% ps_filter(sample.type == s1)
+  Ev <- evenness(sps, index = "all")
+  dfEv <- Ev[,c('pielou', 'simpson')]
+  rich <- estimate_richness(sps)
+  df <- cbind(sample_data(sps), rich, dfEv)
+  return(df)
+}
+
+#Function for means and sd
+alphaDivmeans.fun <- function(ps, s1){
+  sps <- ps %>% ps_filter(sample.type == s1)
+  Ev <- evenness(sps, index = "all")
+  dfEv <- Ev[,c('pielou', 'simpson')]
+  rich <- estimate_richness(sps)
+  df <- cbind(sample_data(sps), rich, dfEv)
+  mean <- df %>% group_by(facility.code) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name=   mean, sd))
+  return(mean)
+}
+
+# Roots
+alphaDiv.16S.FB.roots <- alphaDiv.fun(psB.16S.plant, "Roots")
+write.table(alphaDiv.16S.FB.roots, file="alphaDiv.16S.FB.roots.results.txt")
+
+alphaDiv.16S.FB.rootsMean <- alphaDivmeans.fun(psB.16S.plant, "Roots")
+
+# GM
+alphaDiv.16S.FB.GM <- alphaDiv.fun(psB.16S.plant, "growthmedia")
+write.table(alphaDiv.16S.FB.GM, file="alphaDiv.16S.FB.GM.results.txt")
+
+alphaDiv.16S.FB.GMMean <- alphaDivmeans.fun(psB.16S.plant, "growthmedia")
+
+# Nutrient sol
+alphaDiv.16S.FB.NutSol <- alphaDiv.fun(psB.16S.plant, "Filtered.water")
+write.table(alphaDiv.16S.FB.NutSol, file="alphaDiv.16S.FB.NutSol.results.txt")
+
+alphaDiv.16S.FB.NutSolMean <- alphaDivmeans.fun(psB.16S.plant, "Filtered.water")
+
+# Leaves
+alphaDiv.16S.FB.leaves <- alphaDiv.fun(psB.16S.plant, "Leaves")
+write.table(alphaDiv.16S.FB.leaves, file="alphaDiv.16S.FB.leaves.results.txt")
+
+alphaDiv.16S.FB.leavesMean <- alphaDivmeans.fun(psB.16S.plant, "Leaves")
+
+```
+
+
+# Beta diversity analyses with normalized (relative abundance) data 
+```{r}
+# Get relative abundance in %
+psB.16S.plant_RA <- transform_sample_counts(psB.16S.plant, function(x) x/sum(x))
+
+```
+## Permanova Bray-Curtis
+```{r}
+sampledf.FB <- data.frame(sample_data(psB.16S.plant_RA))
+distFB.matBC <- phyloseq::distance(psB.16S.plant_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+#setBlocks(perm) <- with(sampledf.FB, replicate)
+pmvFB.BCgeneral <- adonis2(distFB.matBC ~ sample.type*sampling.season*replicate, data = sampledf.FB, permutations = perm)
+
+pmvFB.BCgeneral
+
+#Results: in all sample type and system type are significant
+```
+```{r}
+# Homogeneity of dispersion test
+permutest(betadisper(distFB.matBC, sampledfF.FB$sample.type)) #Significant
+
+permutest(betadisper(distFB.matBC, sampledfF.FB$sampling.season)) #Significant
+
+permutest(betadisper(distFB.matBC, sampledfF.FB$variety)) #Significant
+
+permutest(betadisper(distFB.matBC, sampledfF.FB$replicate)) #NOT Significant
+```
+
+## PCoA-Bray
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Ordination PCoA-Bray
+ordBC.FB = ordinate(psB.16S.plant_RA, method = "PCoA", distance = "bray")
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.OrdFB.BC <- plot_ordination(psB.16S.plant_RA, ordBC.FB, color = "sample.type") 
+PCoA_B.FB <-p.OrdFB.BC + 
+  geom_point(mapping = aes(shape = factor(sampling.season)),size=3, alpha=0.85) + stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "Season")
+                                    
+# Save plot
+ggsave("PCoA_Bray.FacilityB.png", PCoA_B.FB, 
+  width = 15,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Roots Season 1&2 all ponds
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get relative abundance
+psB.16S.roots.cm <- microbiome::transform(psB.16S.roots, "compositional")
+
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.S1.16s <- cASV.cal(psB.16S.roots.cm , "1")
+core_OTUs.S2.16s <- cASV.cal(psB.16S.roots.cm , "2")
+
+BS1r.list <- list(Season1 = core_OTUs.S1.16s, Season2 = core_OTUs.S2.16s)
+
+p.BS1r <- ggvenn(BS1r.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+p.BS1r
+
+# Save plot
+ggsave("VennBact.roots.FacilityB.png", p.BS1r, 
+  width = 12,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+### Season 1 - list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+tax.table.B1.16S <- as.data.frame(tax_table(psB.16S.roots))
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B1r <-  core_OTUs.S1.16s[!core_OTUs.S1.16s %in% core_OTUs.S2.16s]
+tax.B1r <- tax.table.B1.16S[which(row.names(tax.table.B1.16S) %in% asv.B1r),]
+tax.B1r
+```
+
+### Season 2 - list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B2r <-  core_OTUs.S2.16s[!core_OTUs.S2.16s %in% core_OTUs.S1.16s]
+tax.B2r <- tax.table.B1.16S[which(row.names(tax.table.B1.16S) %in% asv.B2r),]
+tax.B2r
+```
+
+### Season 1 ∪ Season 2 list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B12r <-  core_OTUs.S1.ITs[core_OTUs.S1.ITs %in% core_OTUs.S2.ITs]
+tax.B12r <- tax.table.B1.ITS[which(row.names(tax.table.B1.ITS) %in% asv.B12r),]
+tax.B12r
+```
+
+
+## All ponds Season 1&2
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.roots.shared <-  Reduce(intersect, BS1r.list)
+
+#Fix taxa names
+psB.roots.16S.cm <- tax_fix(psB.16S.roots.cm)
+
+#Convert phyloseq to dataframe
+df.psB.roots.16S.cm <- psmelt(psB.roots.16S.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.roots.16S.cm <- filter(df.psB.roots.16S.cm, OTU %in% c(pB.roots.shared))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.roots.16S.cm$Tax <- paste(filtered.df.psB.roots.16S.cm$OTU, filtered.df.psB.roots.16S.cm$Genus, sep= ":")
+
+#Get a bar plot of relative abundance and Genus
+abund_plot <-filtered.df.psB.roots.16S.cm %>%
+  dplyr::group_by(Tax, sampling.point) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+plot.B.rootsFB <- ggplot(data=abund_plot , aes(x = Abundance, y = Tax, fill = sampling.point)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+      scale_fill_manual(values = colors, ) +
+        labs(x = "Relative Abundance (%)", y = "All ponds\nShared Bacterial Taxa\n\n") +
+          scale_fill_manual(name = "DWC-Pond", values = colors, breaks=c("Pond1", "Pond2", "Pond3"), labels=c("Pond 1","Pond 2", "Pond 3")) + theme_few() + theme(legend.position = c(0.82, 0.8))
+
+# Save plot
+ggsave("BarplotBact.roots.FacilityB.png", plot.B.rootsFB , 
+  width = 18,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Nutrient solution Season 1&2 all ponds
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get relative abundance
+psB.16S.water.cm <- microbiome::transform(psB.16S.water, "compositional")
+
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.S1w.16s <- cASV.cal(psB.16S.water.cm , "1")
+core_OTUs.S2w.16s <- cASV.cal(psB.16S.water.cm , "2")
+
+BS1w.list <- list(Season1 = core_OTUs.S1w.16s, Season2 = core_OTUs.S2w.16s)
+
+p.BS1w <- ggvenn(BS1w.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennBact.water.FacilityB.png", p.BS1w, 
+  width = 13,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+
+```
+
+## All ponds Season 1&2
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.water.shared <-  Reduce(intersect, BS1w.list)
+
+#Fix taxa names
+psB.water.16S.cm <- tax_fix(psB.16S.water.cm)
+
+#Convert phyloseq to dataframe
+df.psB.water.16S.cm <- psmelt(psB.water.16S.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.water.16S.cm <- filter(df.psB.water.16S.cm, OTU %in% c(pB.water.shared))
+
+filtered.df.psB.water.16S.cm2 <- filtered.df.psB.water.16S.cm %>% dplyr::mutate(Genus = ifelse(grepl("Rhizobium", Genus),"Rhizobium group", Genus))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.water.16S.cm2$Tax <- paste(filtered.df.psB.water.16S.cm2$OTU, filtered.df.psB.water.16S.cm2$Genus, sep= ":")
+
+#Get a bar plot of relative abundance and Genus
+abund_plotw <- filtered.df.psB.water.16S.cm2 %>%
+  dplyr::group_by(Tax, replicate) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+plot.B.waterFB <- ggplot(data=abund_plotw, aes(x = Abundance, y = Tax, fill = replicate)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+      scale_fill_manual(values = colors, ) +
+        labs(x = "Relative Abundance (%)", y = "All ponds\nShared Bacterial Taxa\n\n") +
+          scale_fill_manual(name = "DWC-Pond", values = colors, breaks=c("Pond1", "Pond2", "Pond3"), labels=c("Pond 1","Pond 2", "Pond 3")) + theme_few() + theme(legend.position = c(0.8, 0.2))
+
+# Save plot
+ggsave("BarplotBact.water.FacilityB.png", plot.B.waterFB, 
+  width = 18,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+## P1 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P1 data
+
+psB.16S.waterp1 <- psB.16S.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond1")
+
+
+psB.16S.waterp1.cm <- microbiome::transform(psB.16S.waterp1, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp1wS1.16s <- cASV.cal(psB.16S.waterp1.cm, "1")
+core_OTUs.Bp1wS2.16s <- cASV.cal(psB.16S.waterp1.cm, "2")
+
+
+BP1w.list <- list(Season1 = core_OTUs.Bp1wS1.16s, Season2 = core_OTUs.Bp1wS2.16s)
+
+p.BP1w <- ggvenn(BP1w.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennBact.waterP1.FacilityB.png", p.BP1w, 
+  width = 12,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+```
+
+### Barplot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.waterP1.shared <-  Reduce(intersect, BP1w.list)
+
+#Fix taxa names
+psB.16S.waterp1.cm <- tax_fix(psB.16S.waterp1.cm)
+
+#Convert phyloseq to dataframe
+df.psB.waterP1.16S.cm <- psmelt(psB.16S.waterp1.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.waterP1.16S.cm <- filter(df.psB.waterP1.16S.cm, OTU %in% c(pB.waterP1.shared))
+
+filtered.df.psB.waterP1.16S.cm2 <- filtered.df.psB.waterP1.16S.cm %>% dplyr::mutate(Season = if_else(sampling.season==1, "S1", "S2"))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.waterP1.16S.cm2$Tax <- paste(filtered.df.psB.waterP1.16S.cm2$OTU, filtered.df.psB.waterP1.16S.cm2$Genus, sep= ":")
+
+                       
+#Get a bar plot of relative abundance and Genus
+abund_plot.P1w <- filtered.df.psB.waterP1.16S.cm2 %>%
+  dplyr::group_by(Tax, Season) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#EFC000FF", '#80CDC1')
+
+plot.P1w <- ggplot(data=abund_plot.P1w , aes(x = Abundance, y = Tax, fill = Season)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+        labs(x = "Relative Abundance (%)", y = "Bacterial Taxa - Pond 1") +
+          scale_fill_manual(name = "Sampled\nSeasons", values = colors, breaks = c("S1", "S2"), labels = c("August 2021","January 2022")) + theme_few() 
+
+
+# Save plot
+ggsave("BarplotBact.waterP1.FacilityB.png", plot.P1w, 
+  width = 19,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+## P2 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P2 data
+
+psB.16S.waterp2 <- psB.16S.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond2")
+
+
+psB.16S.waterp2.cm <- microbiome::transform(psB.16S.waterp2, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp2wS1.16s <- cASV.cal(psB.16S.waterp2.cm, "1")
+core_OTUs.Bp2wS2.16s <- cASV.cal(psB.16S.waterp2.cm, "2")
+
+
+BP2w.list <- list(Season1 = core_OTUs.Bp2wS1.16s, Season2 = core_OTUs.Bp2wS2.16s)
+
+p.BP2w <- ggvenn(BP2w.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennBact.waterP2.FacilityB.png", p.BP2w, 
+  width = 12,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+```
+
+### Barplot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.waterP2.shared <-  Reduce(intersect, BP2w.list)
+
+#Fix taxa names
+psB.16S.waterp2.cm <- tax_fix(psB.16S.waterp2.cm)
+
+#Convert phyloseq to dataframe
+df.psB.waterP2.16S.cm <- psmelt(psB.16S.waterp2.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.waterP2.16S.cm <- filter(df.psB.waterP2.16S.cm, OTU %in% c(pB.waterP2.shared))
+
+filtered.df.psB.waterP2.16S.cm2 <- filtered.df.psB.waterP2.16S.cm %>% dplyr::mutate(Season = if_else(sampling.season==1, "S1", "S2"))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.waterP2.16S.cm2$Tax <- paste(filtered.df.psB.waterP2.16S.cm2$OTU, filtered.df.psB.waterP2.16S.cm2$Genus, sep= ":")
+
+                       
+#Get a bar plot of relative abundance and Genus
+abund_plot.P2w <- filtered.df.psB.waterP2.16S.cm2 %>%
+  dplyr::group_by(Tax, Season) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#EFC000FF", '#80CDC1')
+
+plot.P2w <- ggplot(data=abund_plot.P2w , aes(x = Abundance, y = Tax, fill = Season)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+        labs(x = "Relative Abundance (%)", y = "Bacterial Taxa - Pond 2") +
+          scale_fill_manual(name = "Sampled\nSeasons", values = colors, breaks = c("S1", "S2"), labels = c("August 2021","January 2022")) + theme_few() 
+
+
+# Save plot
+ggsave("BarplotBact.waterP2.FacilityB.png", plot.P2w, 
+  width = 19,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+## P3 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P2 data
+
+psB.16S.waterp3 <- psB.16S.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond3")
+
+
+psB.16S.waterp3.cm <- microbiome::transform(psB.16S.waterp3, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp3wS1.16s <- cASV.cal(psB.16S.waterp3.cm, "1")
+core_OTUs.Bp3wS2.16s <- cASV.cal(psB.16S.waterp3.cm, "2")
+
+
+BP3w.list <- list(Season1 = core_OTUs.Bp3wS1.16s, Season2 = core_OTUs.Bp3wS2.16s)
+
+p.BP3w <- ggvenn(BP3w.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennBact.waterP3.FacilityB.png", p.BP3w, 
+  width = 12,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+```
+
+### Barplot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.waterP3.shared <-  Reduce(intersect, BP3w.list)
+
+#Fix taxa names
+psB.16S.waterp3.cm <- tax_fix(psB.16S.waterp3.cm)
+
+#Convert phyloseq to dataframe
+df.psB.waterP3.16S.cm <- psmelt(psB.16S.waterp3.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.waterP3.16S.cm <- filter(df.psB.waterP3.16S.cm, OTU %in% c(pB.waterP1.shared))
+
+filtered.df.psB.waterP3.16S.cm2 <- filtered.df.psB.waterP3.16S.cm %>% dplyr::mutate(Season = if_else(sampling.season == 1, "S1", "S2"))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.waterP3.16S.cm2$Tax <- paste(filtered.df.psB.waterP3.16S.cm2$OTU, filtered.df.psB.waterP3.16S.cm2$Genus, sep= ":")
+
+                       
+#Get a bar plot of relative abundance and Genus
+abund_plot.P3w <- filtered.df.psB.waterP3.16S.cm2 %>%
+  dplyr::group_by(Tax, Season) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#EFC000FF", '#80CDC1')
+
+plot.P3w <- ggplot(data=abund_plot.P3w , aes(x = Abundance, y = Tax, fill = Season)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+        labs(x = "Relative Abundance (%)", y = "Bacterial Taxa - Pond 3") +
+          scale_fill_manual(name = "Sampled\nSeasons", values = colors, breaks = c("S1", "S2"), labels = c("August 2021","January 2022")) + theme_few() 
+
+
+# Save plot
+ggsave("BarplotBact.waterP3.FacilityB.png", plot.P3w, 
+  width = 19,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# FUNGI
+# Alpha diversity
+```{r}
+# Evenness calculation 
+Evenness.ITS.FB <- evenness(psB.ITS.plant, index = "all")
+
+# Create data frame with evenness measurements
+df.ITS.FB.Ev <- Evenness.ITS.FB[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.ITS.FB <- estimate_richness(psB.ITS.plant)
+
+# Create a data frame with alpha diversity and metadata
+adiv.ITS.FB.df <- cbind(sample_data(psB.ITS.plant), richness.ITS.FB, df.ITS.FB.Ev)
+
+#write.table(adiv.ITS.FB.df, file="adiv.FB.ITS.results.txt")
+
+#adiv.ITS.DWC.df <- read.table("adiv.DWC.ITS.results.txt")
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.ITS.FB <- adiv.ITS.FB.df %>%
+  group_by(sample.type, sampling.season, replicate) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.ITS.FB, file="MeanAdiv.ITS.FBesults.txt")
+
+# Table by 
+#mean_sd_adiv.ITS.DWC <- read.table("MeanAdiv.ITS.DWCesults.txt")
+
+```
+## Boxplots 
+```{r}
+# Prepare a vector of colors with specific color for sample type
+library(RColorBrewer)
+myColors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+#Shannon index plot 
+shannon.ITS.FB.plot <- ggplot(adiv.ITS.FB.df, aes(x = replicate, y = Shannon, fill= replicate)) +
+  geom_boxplot(outlier.shape=NA) + 
+  ylab('Shannon index') +
+  scale_fill_manual(name = "DWC system", values = myColors, breaks=c("Pond1","Pond2","Pond3"), labels=c("Pond 1","Pond 2","Pond 3"))
+
+```
+
+```{r}
+#Change labels facet grid
+#New facet label names for sample.type variable
+sample.labs <- c("Nutrient\nsolution", "Growth\nmedia", "Roots", "Leaves")
+names(sample.labs) <- c("Filtered.water", "growthmedia", "Roots", "Leaves")
+
+# New facet label names for supp variable
+season.labs <- c("Season 1", "Season 2")
+names(season.labs) <- c("1", "2")
+
+# Create the plot
+alphaITS.FB.plot <- shannon.ITS.FB.plot + facet_grid(
+  sampling.season ~ sample.type, 
+  labeller = labeller(sampling.season = season.labs, sample.type = sample.labs))    + theme(strip.background = element_rect(
+     color="black", fill="gray", size=1, linetype="solid")
+          ) + theme_bw() +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+    theme(plot.margin = unit(c(0,2,0.2,1), 'lines'))
+
+
+# Save plot
+ggsave("BoxplotITS.Shannon.FacilityB.png", alphaITS.FB.plot, 
+  width = 16,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Beta diversity analyses with normalized (relative abundance) data 
+```{r}
+# Get relative abundance in %
+psB.ITS.plant_RA <- transform_sample_counts(psB.ITS.plant, function(x) x/sum(x))
+
+```
+## Permanova Bray-Curtis
+```{r}
+sampledfF.FB <- data.frame(sample_data(psB.ITS.plant_RA))
+distFB.matBCF <- phyloseq::distance(psB.ITS.plant_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+#setBlocks(perm) <- with(sampledfF.FB, replicate)
+pmvFB.BCgeneralF <- adonis2(distFB.matBCF ~sample.type*sampling.season*replicate, data = sampledfF.FB, permutations = perm)
+
+pmvFB.BCgeneralF
+
+#Results: in all sample type and system type are significant
+```
+```{r}
+# Homogeneity of dispersion test
+permutest(betadisper(distFB.matBCF, sampledfF.FB$sample.type)) #Significant
+
+permutest(betadisper(distFB.matBCF, sampledfF.FB$sampling.season))#NOT significant 
+
+permutest(betadisper(distFB.matBCF, sampledfF.FB$variety))#NOT significant 
+
+permutest(betadisper(distFB.matBCF, sampledfF.FB$replicate))#NOT significant 
+
+```
+
+## PCoA-Bray
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Ordination PCoA-Bray
+ordBCF.FB = ordinate(psB.ITS.plant_RA, method = "PCoA", distance = "bray")
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.OrdFB.BCF <- plot_ordination(psB.ITS.plant_RA, ordBCF.FB, color = "sample.type") 
+
+PCoA_F.FB <-p.OrdFB.BCF + 
+  geom_point(mapping = aes(shape = factor(sampling.season)),size=3, alpha=0.85) + stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "Season")
+                                    
+# Save plot
+ggsave("PCoA_Bray.FacilityBF.png", PCoA_F.FB, 
+  width = 15,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+All.plots.PCoA <- ggpubr::ggarrange(PCoA_B.FB, PCoA_F.FB,
+                                    labels = c("A", "B"), ncol = 2, nrow = 1,  
+                                    align = "hv", common.legend = T, legend = "right")
+
+# Save plot
+ggsave("PCoA_Bray.FacilityBall.png", All.plots.PCoA, 
+  width = 15,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+
+# Roots Season 1&2 all ponds
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get relative abundance
+psB.ITS.roots.cm <- microbiome::transform(psB.ITS.roots, "compositional")
+
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.S1.ITs <- cASV.cal(psB.ITS.roots.cm , "1")
+core_OTUs.S2.ITs <- cASV.cal(psB.ITS.roots.cm , "2")
+
+BS1r.ITS.list <- list(Season1 = core_OTUs.S1.ITs, Season2 = core_OTUs.S2.ITs)
+
+p.BS1r.ITS <- ggvenn(BS1r.ITS.list, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+p.BS1r.ITS
+
+```
+
+### Season 1 - list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+tax.table.B1.ITS <- as.data.frame(tax_table(psB.ITS.roots))
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B1r <-  core_OTUs.S1.ITs[!core_OTUs.S1.ITs %in% core_OTUs.S2.ITs]
+tax.B1r <- tax.table.B1.ITS[which(row.names(tax.table.B1.ITS) %in% asv.B1r),]
+tax.B1r
+```
+
+### Season 2 - list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B2r <-  core_OTUs.S2.ITs[!core_OTUs.S2.ITs %in% core_OTUs.S1.ITs]
+tax.B2r <- tax.table.B1.ITS[which(row.names(tax.table.B1.ITS) %in% asv.B2r),]
+tax.B2r
+```
+
+### Season 1 ∪ Season 2 list
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+asv.B12r <-  core_OTUs.S1.ITs[core_OTUs.S1.ITs %in% core_OTUs.S2.ITs]
+tax.B12r <- tax.table.B1.ITS[which(row.names(tax.table.B1.ITS) %in% asv.B12r),]
+tax.B12r
+```
+
+
+## All ponds Season 1&2
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.roots.ITS.shared <-  Reduce(intersect, BS1r.ITS.list)
+
+#Fix taxa names
+psB.roots.ITS.cm <- tax_fix(psB.ITS.roots.cm)
+
+#Convert phyloseq to dataframe
+df.psB.roots.ITS.cm <- psmelt(psB.roots.ITS.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.roots.ITS.cm <- filter(df.psB.roots.ITS.cm, OTU %in% c(pB.roots.ITS.shared))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.roots.ITS.cm$Tax <- paste(filtered.df.psB.roots.ITS.cm$OTU, filtered.df.psB.roots.ITS.cm$Genus, sep= ":")
+
+#Get a bar plot of relative abundance and Genus
+abund_plotr.ITS <- filtered.df.psB.roots.ITS.cm %>%
+  dplyr::group_by(Tax, sampling.point) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+plotr.ITS <- ggplot(data=abund_plotr.ITS , aes(x = Abundance, y = Tax, fill = sampling.point)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+      scale_fill_manual(values = colors, ) +
+        labs(x = "Relative Abundance (%)", y = "All ponds\nShared Fungal Taxa\n\n") +
+          scale_fill_manual(name = "DWC-Pond", values = colors, breaks=c("Pond1", "Pond2", "Pond3"), labels=c("Pond 1","Pond 2", "Pond 3")) + theme_few() 
+
+
+#Get unique ASVs
+S1r.ITS.unique <-  core_OTUs.S1.ITs[!core_OTUs.S1.ITs %in% core_OTUs.S2.ITs]
+
+#Select data only from shared ASVs
+filtered.df.psB.rootsP1.ITS.cm <- filter(df.psB.roots.ITS.cm, OTU %in% c(S1r.ITS.unique))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.rootsP1.ITS.cm$Tax <- paste(filtered.df.psB.rootsP1.ITS.cm$OTU, filtered.df.psB.rootsP1.ITS.cm$Genus, sep= ":")
+
+#Get a bar plot of relative abundance and Genus
+abund_plot.P1r.ITS <- filtered.df.psB.rootsP1.ITS.cm %>%
+  dplyr::group_by(Tax, sampling.point) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#0072B2",  "#009E73" , "#56B4E9")
+
+plot.P1r.ITS <- ggplot(data=abund_plot.P1r.ITS , aes(x = Abundance, y = Tax, fill = sampling.point)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+      scale_fill_manual(values = colors) +
+        labs(x = "Relative Abundance (%)", y = "Pond 1 Unique Fungal Taxa\n\n") +
+          scale_fill_manual(name = "DWC-Pond", values = colors, breaks=c("Pond1", "Pond2", "Pond3"), labels=c("Pond 1","Pond 2", "Pond 3")) + theme_few() + theme(legend.position = c(0.82, 0.2))
+
+```
+
+# Nutrient solution Season 1&2 all ponds
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get relative abundance
+psB.ITS.water.cm <- microbiome::transform(psB.ITS.water, "compositional")
+
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.S1w.ITs <- cASV.cal(psB.ITS.water.cm , "1")
+core_OTUs.S2w.ITs <- cASV.cal(psB.ITS.water.cm , "2")
+
+BS1w.listF <- list(Season1 = core_OTUs.S1w.ITs, Season2 = core_OTUs.S2w.16s)
+
+p.BS1wF <- ggvenn(BS1w.listF, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennFun.water.FacilityB.png", p.BS1wF, 
+  width = 13,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+
+```
+
+## P1 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P1 data
+
+psB.ITS.waterp1 <- psB.ITS.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond1")
+
+
+psB.ITS.waterp1.cm <- microbiome::transform(psB.ITS.waterp1, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp1wS1.ITs <- cASV.cal(psB.ITS.waterp1.cm, "1")
+core_OTUs.Bp1wS2.ITs <- cASV.cal(psB.ITS.waterp1.cm, "2")
+
+
+BP1w.listF <- list(Season1 = core_OTUs.Bp1wS1.ITs, Season2 = core_OTUs.Bp1wS2.ITs)
+
+p.BP1wF <- ggvenn(BP1w.listF, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennFun.waterP1.FacilityB.png", p.BP1wF, 
+  width = 13,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+```
+
+### Barplot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.waterP1.sharedF <-  Reduce(intersect, BP1w.listF)
+
+#Fix taxa names
+psB.ITS.waterp1.cm <- tax_fix(psB.ITS.waterp1.cm)
+
+#Convert phyloseq to dataframe
+df.psB.waterP1.ITS.cm <- psmelt(psB.ITS.waterp1.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.waterP1.ITS.cm <- filter(df.psB.waterP1.ITS.cm, OTU %in% c(pB.waterP1.sharedF))
+
+filtered.df.psB.waterP1.ITS.cm2 <- filtered.df.psB.waterP1.ITS.cm %>% dplyr::mutate(Season = if_else(sampling.season==1, "S1", "S2"))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.waterP1.ITS.cm2$Tax <- paste(filtered.df.psB.waterP1.ITS.cm2$OTU, filtered.df.psB.waterP1.ITS.cm2$Genus, sep= ":")
+
+                       
+#Get a bar plot of relative abundance and Genus
+abund_plot.P1wF <- filtered.df.psB.waterP1.ITS.cm2 %>%
+  dplyr::group_by(Tax, Season) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#EFC000FF", '#80CDC1')
+
+plot.P1wF <- ggplot(data=abund_plot.P1wF , aes(x = Abundance, y = Tax, fill = Season)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+        labs(x = "Relative Abundance (%)", y = "Fungal Taxa - Pond 1") +
+          scale_fill_manual(name = "Sampled\nSeasons", values = colors, breaks = c("S1", "S2"), labels = c("August 2021","January 2022")) + theme_few() 
+
+
+# Save plot
+ggsave("BarplotFun.waterP1.FacilityB.png", plot.P1wF, 
+  width = 19,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+
+## P2 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P2 data
+
+psB.ITS.waterp2 <- psB.ITS.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond2")
+
+
+psB.ITS.waterp2.cm <- microbiome::transform(psB.ITS.waterp2, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp2wS1.ITs <- cASV.cal(psB.ITS.waterp2.cm, "1")
+#core_OTUs.Bp2wS2.ITs <- cASV.cal(psB.ITS.waterp2.cm, "2")  #NOT SAMPLES SEASON 2 AVAILABLE
+
+
+BP2w.listF <- list(Season1 = core_OTUs.Bp2wS1.ITs, Season2 = core_OTUs.Bp2wS2.ITs)
+
+p.BP2wF <- ggvenn(BP2w.listF, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennFun.waterP2.FacilityB.png", p.BP2wF, 
+  width = 12,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+```
+
+## P3 NUtSOl both seasons
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# Get only P2 data
+
+psB.ITS.waterp3 <- psB.ITS.plant %>% ps_filter(sample.type == "Filtered.water", replicate == "Pond3")
+
+
+psB.ITS.waterp3.cm <- microbiome::transform(psB.ITS.waterp3, "compositional")
+
+cASV.cal <- function(x, y){
+  remove_idx = as.vector(sample_data(x)$sampling.season == y)
+  x = prune_samples(remove_idx, x)
+  x <- microbiome::transform(x, "compositional")
+  core.taxa.standard <- core_members(x, detection = 0.001, prevalence = 75/100)
+  return(core.taxa.standard)
+}
+
+core_OTUs.Bp3wS1.ITs <- cASV.cal(psB.ITS.waterp3.cm, "1")
+core_OTUs.Bp3wS2.ITs <- cASV.cal(psB.ITS.waterp3.cm, "2")
+
+
+BP3w.listF <- list(Season1 = core_OTUs.Bp3wS1.ITs, Season2 = core_OTUs.Bp3wS2.ITs)
+
+p.BP3wF <- ggvenn(BP3w.listF, fill_color = c("#EFC000FF", "#0073C2FF"),
+            stroke_size = 0.5, set_name_size = 7, text_size = 7,
+            show_percentage = T)
+
+
+# Save plot
+ggsave("VennFun.waterP3.FacilityB.png", p.BP3wF, 
+  width = 12,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+```
+
+### Barplot
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#Get shared ASVs
+pB.waterP3.sharedF <-  Reduce(intersect, BP3w.listF)
+
+#Fix taxa names
+psB.ITS.waterp3.cm <- tax_fix(psB.ITS.waterp3.cm)
+
+#Convert phyloseq to dataframe
+df.psB.waterP3.ITS.cm <- psmelt(psB.ITS.waterp3.cm)
+
+#Select data only from shared ASVs
+filtered.df.psB.waterP3.ITS.cm <- filter(df.psB.waterP3.ITS.cm, OTU %in% c(pB.waterP3.sharedF))
+
+filtered.df.psB.waterP3.ITS.cm2 <- filtered.df.psB.waterP3.ITS.cm %>% dplyr::mutate(Season = if_else(sampling.season==1, "S1", "S2"))
+
+# Add the taxonomy of the ASVs to the new data frame 
+filtered.df.psB.waterP3.ITS.cm2$Tax <- paste(filtered.df.psB.waterP3.ITS.cm2$OTU, filtered.df.psB.waterP3.ITS.cm2$Genus, sep= ":")
+
+                       
+#Get a bar plot of relative abundance and Genus
+abund_plot.P3wF <- filtered.df.psB.waterP3.ITS.cm2 %>%
+  dplyr::group_by(Tax, Season) %>% 
+  dplyr::summarize(Abundance = mean(Abundance)*100) 
+
+colors <- c("#EFC000FF", '#80CDC1')
+
+plot.P3wF <- ggplot(data=abund_plot.P1wF , aes(x = Abundance, y = Tax, fill = Season)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+        labs(x = "Relative Abundance (%)", y = "Fungal Taxa - Pond 3") +
+          scale_fill_manual(name = "Sampled\nSeasons", values = colors, breaks = c("S1", "S2"), labels = c("August 2021","January 2022")) + theme_few() 
+
+
+# Save plot
+ggsave("BarplotFun.waterP3.FacilityB.png", plot.P3wF, 
+  width = 19,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```

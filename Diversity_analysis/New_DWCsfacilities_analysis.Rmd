@@ -1,0 +1,766 @@
+---
+title: "New_DWCsfacilities_analysis"
+author: "Fiama Guevara"
+date: "2024-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Setting libraries
+
+library("phyloseq")
+library("ggplot2")
+library("scales")
+library("grid")
+#library("DESeq2")
+library("vegan")
+library("ape")
+library("plyr")
+library("ggpmisc")
+library("dplyr")
+library("broom")
+library("picante")
+library("Rmisc")
+library("emmeans")
+library("car")  #used for Anova function
+#library("lme4")
+library("tibble")
+library("data.table")
+#library("limma")
+library("microbiome")
+library("ggvenn")
+library("patchwork")
+library("RColorBrewer")
+library("ampvis2")
+library("microViz")
+library("tidyverse")
+library("tidyr")
+library("parallel")
+library("stringr")
+library("stringi")
+library("MuMIn")
+library("ggpubr")
+library("purrr")
+#library("NetCoMi")
+library("randomcoloR")
+library("miaViz")
+#library("metagenomeSeq")
+library("cowplot")
+#library("decontam")
+library("ggthemes")
+library(DECIPHER) #for sequences alignment
+library(phangorn)  #for creating a phylogenentic tree
+library ('ggord')  #for ordination plots
+#library("Maaslin2") #Diff Abund AMcode
+## For citation use: citation("pkgname")
+```
+
+# Bacteria - Subsetting
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+### Read final phyloseq pbject
+ps.16S.final <- readRDS('ps.16S.new.rds')
+
+# For the final analysis just 1 Pond from GCG was included (Pond 1 from Season 2 was selected because same variety)
+# Sub-setting and selecting just one pond for Facility B - 16S
+ps1o.16S <- ps.16S.final %>% ps_filter(comparison == "only")
+sample_data(ps1o.16S)
+
+#Sub-setting for DWC system type
+ps1.16S.plant <- ps1o.16S %>% ps_filter(source == c("Plant", "Water"), sampling.point != "Water.source")
+ps1.16S.DWC <- ps1.16S.plant %>% ps_filter(system.type == "DWC")
+
+
+```
+
+## Diagnostic number reads
+```{r}
+sdt.16S.DWC = data.table(as(sample_data(ps1.16S.DWC), "data.frame"),
+                 TotalReads = sample_sums(ps1.16S.DWC), keep.rownames = TRUE)
+setnames(sdt.16S.DWC, "rn", "SampleID")
+sdt.16S.DWC$TotalReads <- as.numeric(sdt.16S.DWC$TotalReads)
+
+sdt.16S.DWC %>%
+  arrange(TotalReads) 
+
+
+```
+
+```{r}
+TotalReads_DWCFac <- sdt.16S.DWC %>% 
+                        group_by(facility.code) %>%
+                            summarize(Total = sum(TotalReads))
+```
+
+# Alpha diversity
+```{r}
+# Evenness calculation 
+Evenness.16S.DWC <- evenness(ps1.16S.DWC, index = "all")
+
+# Create data frame with evenness measurements
+df.16S.DWC.Ev <- Evenness.16S.DWC[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.16S.DWC <- estimate_richness(ps1.16S.DWC)
+
+# Create a data frame with alpha diversity and metadata
+adiv.16S.DWC.df <- cbind(sample_data(ps1.16S.DWC), richness.16S.DWC, df.16S.DWC.Ev)
+
+#write.table(adiv.16S.DWC.df, file="adiv.DWC.16S.results.txt")
+
+adiv.16S.DWC.df <- read.table("adiv.DWC.16S.results.txt")
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.16S.DWC <- adiv.16S.DWC.df %>%
+  group_by(sample.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.16S.DWC, file="MeanAdiv.16S.DWCesults.txt")
+
+# Table by sample and facility
+#mean_sd_adiv.16S.DWC <- read.table("MeanAdiv.16S.DWCesults.txt")
+
+```
+## Boxplot by sample type
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+# Prepare a vector of colors with specific color for sample type
+library(RColorBrewer)
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+#Observed plot 
+Shannon.16S.plot <- ggplot(adiv.16S.DWC.df, aes(x = sample.type, y = Shannon, fill = sample.type)) +
+  geom_boxplot() + 
+  ylab('Shannon index') +
+  xlab('sample.type') +
+  scale_fill_manual(name = "Sample type", values = myColors, breaks = c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels = c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  scale_x_discrete(limits = c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels = c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  theme_few() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.title.x = element_blank())
+
+
+```
+
+# Alpha div by sample
+```{r}
+#Function for alpha diversity estimates
+alphaDiv.fun <- function(ps, s1){
+  sps <- ps %>% ps_filter(sample.type == s1)
+  Ev <- evenness(sps, index = "all")
+  dfEv <- Ev[,c('pielou', 'simpson')]
+  rich <- estimate_richness(sps)
+  df <- cbind(sample_data(sps), rich, dfEv)
+  return(df)
+}
+
+#Function for means and sd
+alphaDivmeans.fun <- function(ps, s1){
+  sps <- ps %>% ps_filter(sample.type == s1)
+  Ev <- evenness(sps, index = "all")
+  dfEv <- Ev[,c('pielou', 'simpson')]
+  rich <- estimate_richness(sps)
+  df <- cbind(sample_data(sps), rich, dfEv)
+  mean <- df %>% group_by(facility.code) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name=   mean, sd))
+  return(mean)
+}
+
+# Roots
+alphaDiv.16S.DWC.roots <- alphaDiv.fun(ps1.16S.DWC, "Roots")
+write.table(alphaDiv.16S.DWC.roots, file="alphaDiv.16S.DWC.roots.results.txt")
+
+alphaDiv.16S.DWC.rootsMean <- alphaDivmeans.fun(ps1.16S.DWC, "Roots")
+
+# GM
+alphaDiv.16S.DWC.GM <- alphaDiv.fun(ps1.16S.DWC, "growthmedia")
+write.table(alphaDiv.16S.DWC.GM, file="alphaDiv.16S.DWC.GM.results.txt")
+
+alphaDiv.16S.DWC.GMMean <- alphaDivmeans.fun(ps1.16S.DWC, "growthmedia")
+
+# Nutrient sol
+alphaDiv.16S.DWC.NutSol <- alphaDiv.fun(ps1.16S.DWC, "Filtered.water")
+write.table(alphaDiv.16S.DWC.NutSol, file="alphaDiv.16S.DWC.NutSol.results.txt")
+
+alphaDiv.16S.DWC.NutSolMean <- alphaDivmeans.fun(ps1.16S.DWC, "Filtered.water")
+
+# Leaves
+alphaDiv.16S.DWC.leaves <- alphaDiv.fun(ps1.16S.DWC, "Leaves")
+write.table(alphaDiv.16S.DWC.leaves, file="alphaDiv.16S.DWC.leaves.results.txt")
+
+alphaDiv.16S.DWC.leavesMean <- alphaDivmeans.fun(ps1.16S.DWC, "Leaves")
+
+```
+
+
+# Beta diversity analyses with normalized (relative abundance) data 
+```{r}
+
+# Get relative abundance
+ps1.16S.DWC_RA <- transform_sample_counts(ps1.16S.DWC, function(x) x/sum(x))
+
+```
+## Permanova Bray-Curtis
+```{r}
+sampledf.DWC <- data.frame(sample_data(ps1.16S.DWC_RA))
+dist.matBC.DWC <- phyloseq::distance(ps1.16S.DWC_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+pmv.BC.DWC <- adonis2(dist.matBC.DWC ~ sample.type * plant.age * water.source * facility.code, data = sampledf.DWC)
+
+pmv.BC.DWC
+
+#Results: in all sample type and system type are significant
+```
+
+# Ordination plot
+```{r}
+#PCoA-Bray
+ordBC.DWC = ordinate(ps1.16S.DWC_RA, method = "PCoA", distance = "bray")
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.Ord.BC.DWC <- plot_ordination(ps1.16S.DWC_RA, ordBC.DWC, color = "sample.type") 
+
+PCoA_B.DWC <- p.Ord.BC.DWC + 
+  geom_point(mapping = aes(shape = factor(facility.code)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+# Save plot
+ggsave("PCoA_Bray.png", PCoA_B.DWC, 
+  width = 15,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# dbRDA function
+```{r}
+species.DWC <- t(otu_table(ps1.16S.DWC_RA))
+#a <- as.data.frame(species.DWC)
+env.var.DWC <- data.frame(sample_data(ps1.16S.DWC_RA)[,c(10, 13, 17, 18, 19, 20, 21)]) %>% dplyr::mutate(water.source = as.numeric(water.source == "Municipal"), water.source)
+
+ord.dbRDA.B.DWC <- dbrda(species.DWC ~pH + water.temp, env.var.DWC, dist = "bray")   
+
+```
+
+## Significance tests
+```{r}
+summary(ord.dbRDA.B.DWC)
+
+# Total variance explained by the RDA
+RsquareAdj(ord.dbRDA.B.DWC) #adj.r.sqrt=0.121
+
+# Global RDA significance
+anova(ord.dbRDA.B.DWC) #Result=model is significant p=0.001
+
+# Axis significance
+anova(ord.dbRDA.B.DWC, by = "axis") #Result= two Axis are significant
+
+# Terms significance
+anova(ord.dbRDA.B.DWC, by = "terms", permu = 999) #Result= Sig pH and EC
+
+# Check multicollinearity among predictors with VarianceInflationFactor(vif)
+sqrt(vif.cca(ord.dbRDA.B.DWC))
+
+#If values > 2 there are collinearity
+
+```
+
+
+```{r}
+# Method 1 to plot
+db.RDA.plot <- plot_ordination(ps1.16S.DWC_RA,
+                vegan::scores(ord.dbRDA.B.DWC, scaling = 1),
+                type = "sites",
+                color = "sample.type",
+                shape = "facility.code")
+
+```
+
+```{r}
+#Other way to plot ordinations but not really customizable
+#Change var labels
+new_lab <- list(water.source = 'WS', water.temp = 'WT', plant.age = 'Age',
+ pH = 'pH', EC = 'EC')
+
+plot <- ggord(ord.dbRDA.B.DWC, env.var.DWC$sample.type, vec_lab = new_lab)
+
+```
+
+
+```{r}
+# Now add the environmental variables as arrows to the plot_orination result
+arrowmat = vegan::scores(ord.dbRDA.B.DWC, display = "bp")
+
+# Add labels, make a data.frame
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+
+# Define the arrow aesthetic mapping
+arrow_map = aes(xend = dbRDA1, yend = dbRDA2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_map = aes(x = 1.05 * dbRDA1, y = 1.05 * dbRDA2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowhead = arrow(length = unit(0.05, "npc"))
+
+p1 = db.RDA.plot + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "black", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+p1
+```
+
+
+```{r}
+fit <- envfit(ord.dbRDA.B.DWC ~pH + EC + water.temp + plant.age + water.source, env.var.DWC,perm=999, display = "lc")
+
+plot(ord.dbRDA.B.DWC, type = "n")
+plot(fit)
+points(ord.dbRDA.B.DWC)
+
+```
+
+
+## Final plot
+```{r}
+db.RDA_plot.final <- p1 + geom_point(mapping = aes(shape = factor(facility.code)), size=3, alpha=0.85) +
+        ggtitle("dbRDA- Bacterial communities") +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample Type", values = c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C"), breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "Facility ID", x= "\ndbRDA1 [X% / X%]", y= "dbRDA2 [X% / x%]")
+
+# Save plot
+ggsave("db.RDA_plot_Bacteria.png", db.RDA_plot.final, 
+  width = 16,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+# Distance based RDA (capscale)
+```{r}
+# Get relative abundances
+ps1.16S.DWC_RA <- transform_sample_counts(ps1.16S.DWC, function(x) x/sum(x))
+                                                
+sample_data(ps1.16S.DWC_RA)
+```
+
+## Plot plant
+```{r}
+#CAP plant
+ord.cap.DWC <- ordinate(ps1.16S.DWC_RA,
+                    formula = o ~ sample.type + pH + EC + water.temp + plant.age + water.source + humidity,
+                    method = "CAP",
+                    distance = "bray")
+```
+
+
+```{r}
+summary(ord.cap.DWC)
+```
+```{r}
+# Total variance explained by the RDA
+RsquareAdj(ord.cap.DWC) #adj.r.sqrt=0.30
+
+# Global RDA significance
+anova(ord.cap.DWC) #Result=model is significant p=0.001
+
+```
+```{r}
+anova(ord.cap.DWC, by="axis")
+```
+```{r}
+anova(ord.cap.DWC, by="terms")
+```
+
+```{r}
+cap.plot.DWC <- plot_ordination(ps1.16S.DWC_RA,
+                vegan::scores(ord.cap.DWC, scaling = 1),
+                type = "sites",
+                color = "sample.type",
+                shape = "facility.code")
+
+```
+
+```{r}
+# Now add the environmental variables as arrows to the plot_ordination result
+arrowmatDWC = vegan::scores(ord.cap.DWC, display = "bp")
+
+# Add labels, make a data.frame
+arrowdfDWC <- data.frame(labels = rownames(arrowmatDWC), arrowmatDWC)
+
+arrowDWC_sel <- arrowdfDWC[4:5,]
+
+# Define the arrow aesthetic mapping
+arrow_mapDWC = aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_mapDWC = aes(x = 1.05 * CAP1, y = 1.05 * CAP2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowheadDWC = arrow(length = unit(0.05, "npc"))
+
+pDWC = cap.plot.DWC + geom_segment(arrow_mapDWC, size = 0.4, data = arrowDWC_sel, color = "black", arrow = arrowheadDWC) + geom_text(label_mapDWC, size = 3, nudge_x = 0.02, nudge_y = -0.01, data = arrowDWC_sel)
+
+pDWC
+```
+
+```{r}
+## Final plot
+
+## Prepare a vector of colors with specific color for system type
+myColorsP <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+CAP.DWC.final <- pDWC + geom_point(mapping = aes(shape = factor(facility.code)), size = 3) +
+        ggtitle("dbRDA- Bacterial communities DWCs") +
+    scale_shape_manual(values=c("FacilityB" = 17, "FacilityI" = 9, "FacilityJ" = 10)) +
+      scale_color_manual(values = myColorsP, name = "Sample Type", breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) +
+  labs(shape = "Facility ID", x= "\ndbRDA1 [9.03% / 23.14%]", y= "dbRDA2 [8.90% / 22.81%]")
+
+# Save plot
+ggsave("dbRDA.DWC.Bacteria.final.png", CAP.DWC.final, 
+  width = 16,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# CCA analysis
+```{r}
+species.DWC <- t(otu_table(ps1.16S.DWC))
+transformed.species <- decostand(species.DWC, method = "hellinger")
+
+env.var.DWC <- data.frame(sample_data(ps1.16S.DWC)[,c(10, 13, 17, 18, 19, 20, 21)]) %>% dplyr::mutate(water.source = as.numeric(water.source == "Municipal"), water.source)
+
+cca.B.DWC <- cca(transformed.species ~., env.var.DWC)
+anova.cca(cca.B.DWC, by="terms")
+```
+
+
+# Fungi - Subsetting
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+### Read final phyloseq pbject
+ps.ITS.final <- readRDS('ps.ITS.new.rds')
+
+# For the final analysis just 1 Pond from GCG was included (Pond 1 from Season 2 was selected because same variety)
+# Sub-setting and selecting just one pond for Facility B - ITS
+ps1o.ITS <- ps.ITS.final %>% ps_filter(comparison == "only")
+sample_data(ps1o.ITS)
+
+#Sub-setting for DWC system type
+ps1.ITS.plant <- ps1o.ITS %>% ps_filter(source == c("Plant", "Water"), sampling.point != "Water.source")
+ps1.ITS.DWC <- ps1.ITS.plant %>% ps_filter(system.type == "DWC")
+
+```
+
+# Alpha diversity
+```{r}
+# Evenness calculation 
+Evenness.ITS.DWC <- evenness(ps1.ITS.DWC, index = "all")
+
+# Create data frame with evenness measurements
+df.ITS.DWC.Ev <- Evenness.ITS.DWC[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.ITS.DWC <- estimate_richness(ps1.ITS.DWC)
+
+# Create a data frame with alpha diversity and metadata
+adiv.ITS.DWC.df <- cbind(sample_data(ps1.ITS.DWC), richness.ITS.DWC, df.ITS.DWC.Ev)
+
+#write.table(adiv.ITS.DWC.df, file="adiv.DWC.ITS.results.txt")
+
+adiv.ITS.DWC.df <- read.table("adiv.DWC.ITS.results.txt")
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.ITS.DWC <- adiv.ITS.DWC.df %>%
+  group_by(sample.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.ITS.DWC, file="MeanAdiv.ITS.DWCesults.txt")
+
+#df <- read.table("adiv.ITS.results.txt")
+
+```
+
+## Boxplot by sample type
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+# Prepare a vector of colors with specific color for sample type
+library(RColorBrewer)
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+#Observed plot 
+Shannon.ITS.plot <- ggplot(adiv.ITS.DWC.df, aes(x = sample.type, y = Shannon, fill = sample.type)) +
+  geom_boxplot() + 
+  ylab('Shannon index') +
+  xlab('sample.type') +
+  scale_fill_manual(name = "Sample type", values = myColors, breaks = c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels = c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  scale_x_discrete(limits = c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels = c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  theme_few() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.title.x = element_blank())
+
+
+```
+
+```{r}
+#Plotting all figures in one
+library(patchwork)
+
+AlphaDiv.DWCs <- (Shannon.16S.plot + Shannon.ITS.plot) +
+  plot_annotation(tag_levels = "A") +
+    plot_layout(guides = 'collect') & 
+    theme (axis.title = element_text (size = 8)) &
+      theme(plot.tag = element_text(size = 8)) &
+          theme(axis.text.y = element_text (size = 8), axis.text.x = element_text (size = 8)) 
+
+ggsave("AlphaDiv.DWCs.png", AlphaDiv.DWCs, 
+  width = 20,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+# Beta diversity analyses with normalized (relative abundance) data 
+```{r}
+
+# Get relative abundance in %
+ps1.ITS.DWC_RA <- transform_sample_counts(ps1.ITS.DWC, function(x) x/sum(x))
+
+```
+## Permanova Bray-Curtis
+```{r}
+sampledf.DWC.F <- data.frame(sample_data(ps1.ITS.DWC_RA))
+dist.matBC.DWC.F <- phyloseq::distance(ps1.ITS.DWC_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+pmv.BC.DWC.F <- adonis2(dist.matBC.DWC.F ~ sample.type * plant.age * water.source * facility.code, data = sampledf.DWC.F)
+
+pmv.BC.DWC.F
+
+#Results: in all sample type and system type are significant
+```
+
+# Distance based RDA (capscale)
+```{r}
+# Get relative abundances
+ps1.ITS.DWC_RA <- transform_sample_counts(ps1.ITS.DWC, function(x) x/sum(x))
+                                                
+sample_data(ps1.ITS.DWC_RA)
+```
+
+```{r}
+
+ord.cap.DWC.F <- ordinate(ps1.ITS.DWC_RA,
+                    formula = o ~ sample.type + pH + EC + water.temp + plant.age + water.source + humidity,
+                    method = "CAP",
+                    distance = "bray")
+
+cap.plot.DWC.F <- plot_ordination(ps1.ITS.DWC_RA,
+                vegan::scores(ord.cap.DWC.F, scaling = 1),
+                type = "sites",
+                color = "sample.type",
+                shape = "facility.code")
+
+```
+
+```{r}
+# Now add the environmental variables as arrows to the plot_ordination result
+arrowmatDWCF = vegan::scores(ord.cap.DWC.F, display = "bp")
+
+# Add labels, make a data.frame
+arrowdfDWCF <- data.frame(labels = rownames(arrowmatDWCF), arrowmatDWCF)
+
+arrowDWCF_sel <- arrowdfDWCF[4:5,]
+
+# Define the arrow aesthetic mapping
+arrow_mapDWCF = aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_mapDWCF = aes(x = 1.05 * CAP1, y = 1.05 * CAP2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowheadDWCF = arrow(length = unit(0.05, "npc"))
+
+pDWCF = cap.plot.DWC.F + geom_segment(arrow_mapDWCF, size = 0.4, data = arrowDWCF_sel, color = "black", arrow = arrowheadDWCF) + geom_text(label_mapDWCF, size = 3, nudge_x = 0.02, nudge_y = 0.01, data = arrowDWCF_sel)
+
+pDWCF
+```
+
+## Plot
+```{r}
+## Prepare a vector of colors with specific color for system type
+myColorsP <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+CAP.DWC.F.final <- pDWCF + geom_point(mapping = aes(shape = factor(facility.code)), size = 3) +
+        ggtitle("dbRDA- Fungal communities DWCs") +
+    scale_shape_manual(values=c("FacilityB" = 17, "FacilityI" = 9, "FacilityJ" = 10)) +
+      scale_color_manual(values = myColorsP, name = "Sample Type", breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) +
+  labs(shape = "Facility ID", x= "\ndbRDA1 [19.20% / 43.54%]", y= "dbRDA2 [10.49% / 23.79%]")
+
+# Save plot
+ggsave("dbRDA.DWC.Fungi.final.png", CAP.DWC.F.final, 
+  width = 16,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+
+
+# dbRDA function
+```{r}
+species.DWC.F <- t(otu_table(ps1.ITS.DWC_RA))
+env.var.DWC.F <- data.frame(sample_data(ps1.ITS.DWC_RA)[,c(10, 13, 17, 18, 19, 20, 21)]) %>%dplyr::mutate(water.source = as.numeric(water.source == "Municipal"), water.source)
+
+
+#scale data apply only for numerical variables
+scale.env = scale(env.var.DWC.F, center = TRUE, scale = TRUE)
+
+ord.dbRDA.F.DWC <- dbrda(species.DWC.F ~ plant.age + pH + EC + humidity, env.var.DWC.F, dist = "bray")   #+ Condition(facility.code) + GH.temp + humidity
+
+```
+
+## Significance tests
+```{r}
+summary(ord.dbRDA.F.DWC)
+
+# Total variance explained by the RDA
+RsquareAdj(ord.dbRDA.F.DWC) #adj.r.sqrt=0.187
+
+# Global RDA significance
+anova(ord.dbRDA.F.DWC) #Result=model is significant p=0.001
+
+# Axis significance
+anova(ord.dbRDA.F.DWC, by = "axis") #Result= two Axis are significant
+
+# Terms significance
+anova(ord.dbRDA.F.DWC, by = "terms") #Result= Sig pH and EC
+
+```
+
+```{r}
+# Now add the environmental variables as arrows to the plot_orination result
+arrowmat = vegan::scores(ord.dbRDA.F.DWC, display = "bp")
+
+# Add labels, make a data.frame
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+
+# Define the arrow aesthetic mapping
+arrow_map = aes(xend = dbRDA1, yend = dbRDA2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_map = aes(x = 1.05 * dbRDA1, y = 1.05 * dbRDA2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowhead = arrow(length = unit(0.05, "npc"))
+
+p1 = db.RDA.plot + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "black", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+p1
+```
+
+## Final plot
+```{r}
+db.RDA_plot.final.F <- p1 + geom_point(mapping = aes(shape = factor(facility.code)), size=3, alpha=0.85) +
+        ggtitle("dbRDA- Bacterial communities") +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample Type", values = c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C"), breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "Facility ID", x= "\ndbRDA1 [X% / X%]", y= "dbRDA2 [X% / x%]")
+
+# Save plot
+ggsave("db.RDA_plot_Fungi.png", db.RDA_plot.final.F, 
+  width = 16,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+#Other way to plot ordinations but not really customizable
+#Change var labels
+new_lab <- list(water.source = 'WS', water.temp = 'WT', plant.age = 'Age',
+ pH = 'pH', EC = 'EC')
+
+plot.F <- ggord(ord.dbRDA.F.DWC, env.var.DWC.F$sample.type, vec_lab = new_lab)
+
+```
+
+```{r}
+fit.F <- envfit(ord.dbRDA.F.DWC ~pH + EC + water.temp + plant.age + water.source, env.var.DWC.F,perm=999, display = "lc")
+
+plot(ord.dbRDA.F.DWC, type = "n")
+plot(fit.F)
+points(ord.dbRDA.F.DWC)
+
+```
+
+# dbRDA- Roots
+```{r}
+# Get relative abundance subset roots
+ps1.16S.DWC.R <- ps1.16S.DWC %>% ps_filter(sample.type == "Roots")
+ps1.16S.DWC.R_RA <- transform_sample_counts(ps1.16S.DWC.R, function(x) x/sum(x))
+
+# Get species matrix and env.variables matrix
+species.DWC.R <- t(otu_table(ps1.16S.DWC.R_RA))
+env.var <- data.frame(sample_data(ps1.16S.DWC.R_RA)[,c(10, 13, 17, 18, 19, 20, 21)]) %>%dplyr::mutate(water.source = as.numeric(water.source == "Municipal"), water.source)
+
+
+#scale data apply only for numerical variables
+scale.env = scale(env.var, center = TRUE, scale = TRUE)
+
+#Ordination
+ord.dbRDA.DWC.R <- dbrda(species.DWC.R ~pH + plant.age + EC + water.source + water.temp + humidity, env.var, dist = "bray")
+
+```
+
+## Significance tests
+```{r}
+summary(ord.dbRDA.DWC.R)
+
+# Total variance explained by the RDA
+RsquareAdj(ord.dbRDA.DWC.R) #adj.r.sqrt=0.782
+
+# Global RDA significance
+anova(ord.dbRDA.DWC.R) #Result=model is significant p=0.001
+
+# Axis significance
+anova(ord.dbRDA.DWC.R, by = "axis") #Result= two Axis are significant
+
+# Terms significance
+anova(ord.dbRDA.DWC.R, by = "terms") #Result= Sig plant age and water source
+
+```

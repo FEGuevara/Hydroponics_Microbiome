@@ -1,0 +1,498 @@
+---
+title: "New_analysis_Fungi"
+author: "Fiama Guevara"
+date: "2024-04-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Setting libraries
+
+library("phyloseq")
+library("ggplot2")
+library("scales")
+library("grid")
+library("DESeq2")
+library("vegan")
+library("ape")
+library("plyr")
+library("ggpmisc")
+library("dplyr")
+library("broom")
+library("picante")
+library("Rmisc")
+library("emmeans")
+library("car")  #used for Anova function
+#library("lme4")
+library("tibble")
+library("data.table")
+library("limma")
+library("microbiome")
+library("ggvenn")
+library("patchwork")
+library("RColorBrewer")
+library("ampvis2")
+library("microViz")
+library("tidyverse")
+library("tidyr")
+library("parallel")
+library("tidyr")
+library("stringr")
+library("stringi")
+library("MuMIn")
+library("ggpubr")
+library("purrr")
+#library("NetCoMi")
+library("randomcoloR")
+library("miaViz")
+library("metagenomeSeq")
+library("cowplot")
+library("decontam")
+library("ggthemes")
+library(DECIPHER) #for sequences alignment
+library(phangorn)  #for creating a phylogenentic tree
+library("Maaslin2") #Diff Abund AMcode
+## For citation use: citation("pkgname")
+```
+
+# Subsetting
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+### Read final phyloseq object
+ps.ITS.final <- readRDS('ps.ITS.new.rds')
+
+# For the final analysis just 1 Pond from GCG was included (Pond 1 from Season 2 was selected because same variety)
+# Sub-setting and selecting just one pond for Facility B - ITS
+ps1o.ITS <- ps.ITS.final %>% ps_filter(comparison == "only")
+sample_data(ps1o.ITS)
+
+#Sub-setting for plant compartment
+ps1.ITS.plant <- ps1o.ITS %>% ps_filter(source == c("Plant", "Water"), sampling.point != "Water.source")
+ps1.ITS.leaves <- ps1.ITS.plant %>% ps_filter(sample.type == "Leaves")
+ps1.ITS.roots <- ps1.ITS.plant %>% ps_filter(sample.type == "Roots")
+ps1.ITS.GM <- ps1.ITS.plant %>% ps_filter(sample.type == "growthmedia")
+ps1.ITS.water <- ps1.ITS.plant %>% ps_filter(sample.type == "Filtered.water")
+
+```
+
+# Alpha diversity - Indexes
+```{r}
+# Evenness calculation 
+Evenness.ITS <- evenness(ps1.ITS.plant, index = "all")
+
+# Create data frame with evenness measurements
+df.ITS.Ev <- Evenness.ITS[,c('pielou', 'simpson')]
+
+### All alpha diversity indexes estimation
+richness.ITS <- estimate_richness(ps1.ITS.plant)
+
+# Create a data frame with alpha diversity and metadata
+adiv.ITS.df <- cbind(sample_data(ps1.ITS.plant), richness.ITS, df.ITS.Ev)
+
+#write.table(adiv.ITS.df, file="adiv.all.ITS.Newresults.txt")
+
+### Means and standard deviation diversity indexes by compartment
+mean_sd_adiv.ITS <- adiv.ITS.df %>%
+  group_by(sample.type, system.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+#write.table(mean_sd_adiv.ITS, file="Meanadiv.ITS.Newresults.txt")
+
+#df <- read.table("adiv.ITS.results.txt")
+
+## Means only by sample type
+adiv.ITS.df <- read.table("adiv.all.ITS.Newresults.txt")
+
+df.ITS <- mean_sd_adiv.ITS <- adiv.ITS.df %>%
+  group_by(sample.type) %>%
+  summarise_at(vars(c(Observed, Shannon, InvSimpson, Chao1, pielou)), list(name = mean, sd))
+
+
+```
+
+## Statistics
+### Diagnistic plots
+```{r}
+#plots
+par(mfrow = c(2, 2)) 
+
+ggqqplot(adiv.ITS.df$Observed)
+ggqqplot(adiv.ITS.df$Shannon)
+ggqqplot(adiv.ITS.df$InvSimpson)
+ggqqplot(adiv.ITS.df$pielou)
+
+```
+
+## Linear mixed models
+```{r}
+### Diagnostic models - Results= sample type, system type  and the interaction are significant however the contrasts are significant at sample type level and vary between system types
+#####################################----------------------------###################################
+#NOTE: need to restart session to be able to run lme4 package without getting aborted session (RStudio aborting when running lmer)
+#Conflicts with other previously loaded packages
+#####################################----------------------------####################################
+
+library("lme4")
+library("car")
+
+# Upload dataframe with alpha div measures
+adiv.ITS.df <- read.table("adiv.all.ITS.Newresults.txt")
+
+#Analysis on all sample types
+#Observed (richness)
+model.Observed <- lmer(Observed ~ system.type * sample.type + (1|facility.code), data = adiv.ITS.df)
+
+Anova(model.Observed)
+
+summary(model.Observed)
+
+#Residuals plots
+par(mfrow=c(2,3))
+plot(model.Observed, which=1:6) 
+
+res <- resid(model.Observed)
+
+shapiro.test(res)  # Can test normality on raw data or residuals. Residuals recommended or in each group of raw data
+
+par(mfrow = c(1, 2)) # combine plots
+
+# histogram
+hist(res, breaks = 40)
+
+# QQ-plot
+qqPlot(res,
+       id = FALSE # id = FALSE to remove point identification
+)
+
+#Pairwise comparisons 
+mSys <- emmeans(model.Observed, "system.type")
+pairs(mSys) #NO significant differences
+
+mSamp <- emmeans(model.Observed, "sample.type")
+pairs(mSamp) #Significant differences in all contrasts except water-roots
+
+mall <- emmeans(model.Observed, ~ sample.type | system.type)
+pairs(mall)
+
+```
+
+# Beta diversity analyses WITH NORMALIZED (relative abundance) DATA 
+```{r}
+
+# Get relative abundance in %
+ps1.ITS.plant_RA <- transform_sample_counts(ps1.ITS.plant, function(x) x/sum(x))
+
+```
+## Permanova Bray-Curtis
+```{r}
+sampledfF <- data.frame(sample_data(ps1.ITS.plant_RA))
+dist.matBCF <- phyloseq::distance(ps1.ITS.plant_RA, method = "bray")
+
+#Four ways to include 'Facility' as random effect in PERMANOVA
+#fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+setBlocks(perm) <- with(sampledfF, facility.code)
+pmv.BCgeneralF <- adonis2(dist.matBCF ~ sample.type*system.type, data = sampledfF, permutations = perm)
+
+pmv.BCgeneralF
+
+#Results: in all sample type and system type are significant
+```
+
+## Pairwise permanova -Bray Curtis
+```{r}
+# Sample types
+RVAideMemoire::pairwise.perm.manova(dist.matBCF, sampledfF$sample.type, nperm = 999, progress = TRUE, p.method = "fdr", F = T, R2 = T)
+
+# System types
+RVAideMemoire::pairwise.perm.manova(dist.matBCF, sampledfF$system.type, nperm = 999, progress = TRUE, p.method = "fdr", F = T, R2 = T)
+
+```
+
+## Permanova Unifrac
+```{r}
+sampledf <- data.frame(sample_data(ps1.ITS.plant_RA))
+dist.matUni <- phyloseq::distance(ps1.ITS.plant_RA, method = "unifrac")
+
+#Third: fixing 'Facility' as blocks and removing from permutation
+set.seed(100)
+perm <- how(nperm = 999)
+setBlocks(perm) <- with(sampledf, facility.code)
+pmv.Uni <- adonis2(dist.matUni ~ sample.type*system.type, data = sampledf, permutations = perm)
+
+pmv.Uni
+
+```
+## Beta-dispersion test
+```{r}
+# calculates the beta-dispersion for each group, when comparing 2 or more
+#For system type
+disp.testSystemF <-
+  betadisper(dist.matBCF, group = sampledfF$system.type, bias.adjust = TRUE)
+
+#For sample type
+disp.testSampleF <-
+  betadisper(dist.matBCF, group = sampledfF$sample.type, bias.adjust = TRUE)
+
+# tests if centroid distances are significantly different from each other
+disp.anovaSystemF <- anova(disp.testSystemF) #Result= centroids NO sig different p-value=0.5958
+
+disp.anovaSampleF <- anova(disp.testSampleF) #Result= centroids sig different p-value=0.00001889
+```
+
+```{r}
+# test significance between each group
+dispSys.TukeyHSD <- TukeyHSD(disp.testSystem) #Result= No differences
+
+dispSample.TukeyHSD <- TukeyHSD(disp.testSample) #Result= only leaves-roots/GM/water different (p-values=0.0029879, 0.0001004 and 0.0002765, respectively)
+
+```
+
+```{r}
+# plot showing the dispersion for each group
+plot(disp.testSystem, hull = FALSE, ellipse = TRUE)
+```
+```{r}
+# plot showing the dispersion for each group
+plot(disp.testSample, hull = FALSE, ellipse = TRUE)
+```
+
+```{r}
+#test for homogeneity of multivariate dispersions 
+permutest(disp.testSystem, pairwise = TRUE, permutations = 999)
+```
+
+
+# Ordinations
+```{r}
+#PCoA-Bray
+ordBCF = ordinate(ps1.ITS.plant_RA, method = "PCoA", distance = "bray")
+
+#PCoA-Unifrac
+ordUniF = ordinate(ps1.ITS.plant_RA, method = "PCoA", distance = "unifrac")
+
+
+#Non-metric MultiDimensional Scaling (NMDS) - Bray
+ord.nmdsBF <- ordinate(ps1.ITS.plant_RA, method = "NMDS", distance = "bray")
+
+# Create a "stressplot"
+stressplot(ord.nmdsBF) #stress-value= 0.29
+
+#Non-metric MultiDimensional Scaling (NMDS) - Unifrac
+ord.nmdsUF <- ordinate(ps1.ITS.plant_RA, method = "NMDS", distance = "unifrac")
+
+# Create a "stressplot"
+stressplot(ord.nmdsUF) #stress-value= 0.28
+
+```
+
+# Ordination plots - all sample types
+## PCoA-Bray
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.Ord.BCF <- plot_ordination(ps1.ITS.plant_RA, ordBCF, color = "sample.type") 
+
+p.Ord.BCF$layers <- p.Ord.BCF$layers[-1]
+
+PCoA_F <-p.Ord.BCF + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+# Save plot
+ggsave("PCoA_Bray_ITS.png", PCoA_F, 
+  width = 15,
+  height = 15,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+plotsBF.PCoA <- ggpubr::ggarrange(PCoA_B, PCoA_F,
+                                    labels = c("A", "B"), ncol = 2, nrow = 1,  
+                                    align = "hv", common.legend = T, legend = "right")
+
+# Save plot
+ggsave("PCoA_Bray.all.png", plotsBF.PCoA, 
+  width = 18,
+  height = 11,
+  units = "cm",
+  dpi = 600)
+
+```
+
+## PCoA-Unifrac
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.Ord.Uni <- plot_ordination(ps1.ITS.plant_RA, ordUni, color = "sample.type") 
+
+p.Ord.Uni$layers <- p.Ord.Uni$layers[-1]
+
+PCoA_Uni <-p.Ord.Uni + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+```
+
+# NMDS-Bray
+```{r}
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.nmds.B <- plot_ordination(ps1.ITS.plant_RA, ord.nmdsB, color = "sample.type") 
+
+p.nmds.B$layers <- p.nmds.B$layers[-1]
+
+nmds_B <-p.nmds.B + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+    
+```
+
+# NMDS-Unifrac
+```{r}
+## Prepare a vector of colors with specific color for sample type
+myColors <- c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C")
+
+# Plot PCoA - Bray Curtis
+p.nmds.Uni <- plot_ordination(ps1.ITS.plant_RA, ord.nmdsU, color = "sample.type") 
+
+nmds_Uni <-p.nmds.Uni + 
+  geom_point(mapping = aes(shape = factor(system.type)),size=3, alpha=0.85) +
+        stat_ellipse() +
+         geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample type", values = myColors, breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type")
+                                    
+    
+```
+
+# Distance based RDA with capscale
+```{r}
+
+#All samples
+ord.capF <- ordinate(ps1.ITS.plant_RA,
+                    formula = o ~ sample.type + system.type + pH + EC + water.temp + plant.age + water.source + humidity,
+                    method = "CAP",
+                    distance = "bray")
+```
+
+
+```{r}
+summary(ord.capF)
+```
+
+```{r}
+# Total variance explained by the RDA
+RsquareAdj(ord.capF) #adj.r.sqrt=0.38
+
+# Global RDA significance
+anova(ord.capF) #Result=model is significant p=0.001
+
+```
+
+```{r}
+anova(ord.capF, by="axis")
+```
+
+```{r}
+anova(ord.capF, by="terms")
+```
+
+```{r}
+
+cap.plotF <- plot_ordination(ps1.ITS.plant_RA,
+                vegan::scores(ord.capF, scaling = 1),
+                type = "sites",
+                color = "sample.type",
+                shape = "system.type")
+
+```
+
+```{r}
+# Now add the environmental variables as arrows to the plot_ordination result
+arrowmatF = vegan::scores(ord.capF, display = "bp")
+
+# Add labels, make a data.frame
+arrowdfF <- data.frame(labels = rownames(arrowmatF), arrowmatF)
+
+arrowF_sel <- arrowdfF[7:12,]
+
+# Define the arrow aesthetic mapping
+arrow_mapF = aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, label = labels)
+
+label_mapF = aes(x = 1.05 * CAP1, y = 1.05 * CAP2, shape = NULL, color = NULL, label = labels)
+
+# Make a new graphic
+arrowheadF = arrow(length = unit(0.05, "npc"))
+
+p2 = cap.plotF + geom_segment(arrow_mapF, size = 0.4, data = arrowF_sel, color = "black", 
+    arrow = arrowheadF) + geom_text(label_mapF, size = 3, nudge_x = 0.01, nudge_y = 0.02, data = arrowF_sel)
+p2
+```
+
+## Final plot
+```{r}
+db.RDA.F_plot.final <- p2 + geom_point(mapping = aes(shape = factor(system.type)), size=3, alpha=0.85) +
+        ggtitle("dbRDA- Fungal communities") +
+           geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+            geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+              theme_bw() + theme(plot.title = element_text(size = 8), 
+                                 panel.background = element_blank(), 
+                                 panel.grid = element_blank()) + 
+  scale_color_manual(name = "Sample Type", values = c("#A6761D", "#FDBF6F", "#1F78B4", "#33A02C"), breaks=c("Roots", "growthmedia", "Filtered.water", "Leaves"), labels=c("Roots","Growth media","Nutrient solution", "Leaves")) +
+  labs(shape = "System type", x= "\ndbRDA1 [11.71% / 27.78%]", y= "dbRDA2 [8.63% / 20.46%]")
+
+# Save plot
+ggsave("db.RDA_plot_Fungi.png", db.RDA.F_plot.final, 
+  width = 18,
+  height = 12,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r}
+#Alternative plotting option
+ggord(ord.capF)
+```
