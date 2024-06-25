@@ -1,0 +1,1 @@
+This folder contains the output files from nf-core/ampliseq workflow including DADA2 results (ASV count table, taxa table) and the metadata.
