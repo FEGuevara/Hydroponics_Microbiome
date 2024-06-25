@@ -1,10 +1,3 @@
----
-title: "New_analysis_Bacteria"
-author: "Fiama Guevara"
-date: "2024-04-26"
-output: html_document
----
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -107,11 +100,6 @@ pCB <- ggplot(data=dat_controls, aes(x=Sample, y=Abundance, fill=Genus)) +
   labs(x= "", y = "Relative Abundance (%)\n") +
   guides(fill=guide_legend(title="Genera")) + 
    theme_few()
-
-#To change X-axis labels but error
-  theme(axis.text.x = element_text(angle = 90)) +
-  scale_x_discrete(limits = c("FFNC", "FQIAGENC", "FAATCC", "FZYMOC"), labels = c("FFNC" = "BeadsProt","FQIAGENC" = "QiagenKit", "FAATCC" = "ATTCC", "FZYMOC" = "ZYMO"))
-
 
 ggsave("ControlsBacteria_barplot.png", pCB, 
   width = 50,
